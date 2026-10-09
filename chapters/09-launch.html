@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09 · 上线与演进 — 交易系统工程</title>
+<meta name="description" content="发布策略与向后兼容、灰度与回滚、容量规划、SLO 与告警、事故管理与复盘、灾备与多活，以及系统的长期演进路径。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="09-launch">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">09</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Launch</span>
+          <span class="dot"></span>
+          <span class="eyebrow">7 节 · 约 23 分钟</span>
+        </div>
+        <h1>上线与演进：让系统可以长期活着</h1>
+        <p class="chapter-head__lede">
+          上线是系统第一次面对真实世界。这一章讲怎么把变更安全地送到生产、
+          怎么在故障发生时快速止损、怎么规划容量、以及一个交易系统
+          如何在未来几年里持续演进而不推倒重来。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>如何让变更安全，如何让系统活得久</dd></div>
+          <div><dt>关键产出</dt><dd>发布流程 · 容量模型 · SLO 体系 · 演进路线图</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch09-launch.webp" width="1200" height="675"
+               alt="昏暗的运维控制室，一整面墙的显示器上显示着发光的波形与网格" decoding="async">
+        </div>
+        <figcaption><b>FIG 09</b> 运维的核心目标只有一个：缩短从「出问题」到「知道出问题了」的时间。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">09.1</span>发布：向后兼容是唯一的铁律</h2>
+
+        <p>
+          交易系统的发布与普通系统有一个本质区别：
+          <strong>数据不能回滚</strong>。资金流水一旦产生就永久存在，
+          「回滚数据库」这件事在交易系统里根本不存在。
+        </p>
+
+        <p>
+          这决定了一条铁律：<em>新代码必须能读旧数据，旧代码也必须能读新数据。</em>
+          只有这样，当新版本出问题时，才能通过「回滚代码」恢复服务 ——
+          因为旧代码面对新版本写入的数据依然能正确工作。
+        </p>
+
+        <div class="compare">
+          <div class="bad">
+            <h5>破坏性变更</h5>
+            <ul>
+              <li>直接给表加 NOT NULL 字段</li>
+              <li>重命名字段或表</li>
+              <li>修改字段语义（如金额单位从「元」改成「分」）</li>
+              <li>删除「看起来没人用」的字段</li>
+              <li>修改枚举值含义</li>
+            </ul>
+            <p style="margin-top:12px;font-size:.8125rem;color:var(--ink-3)">这些操作一旦上线，回滚代码就会导致服务崩溃，因为旧代码读不懂新数据。</p>
+          </div>
+          <div class="good">
+            <h5>兼容性变更（Expand / Contract）</h5>
+            <ul>
+              <li>加字段：先加可空字段，双写一段时间，再逐步切换读取</li>
+              <li>改名：新增字段并双写，读切到新字段，最后删旧字段</li>
+              <li>改语义：新增字段，新旧并存，业务侧迁移完成后再废弃</li>
+              <li>删字段：先停止写入，观察一个完整周期，确认无人读取后再删</li>
+              <li>改枚举：新增值而非修改已有值的含义</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 288" role="img" aria-label="扩展与收缩的发布流程">
+            <defs>
+              <marker id="a13" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <rect class="dg-node" x="16" y="16" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="40">阶段 1 · Expand 扩展</text>
+            <text class="dg-s" x="34" y="58">新增字段（可空），代码同时写新旧两处。此时新旧代码都能正常工作，随时可回滚</text>
+
+            <path class="dg-line dg-line--gold" d="M340,72 V92" marker-end="url(#a13)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="94" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="118">阶段 2 · Migrate 迁移数据</text>
+            <text class="dg-s" x="34" y="136">用后台任务把历史数据补齐到新字段，边补边校验一致性。数据量大时可能持续数天</text>
+
+            <path class="dg-line dg-line--gold" d="M340,150 V170" marker-end="url(#a13)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="172" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="196">阶段 3 · Switch 切换读取</text>
+            <text class="dg-s" x="34" y="214">读取路径切到新字段，旧字段仅保留写入。观察一个完整对账周期，确认无差异</text>
+
+            <path class="dg-line dg-line--gold" d="M340,228 V248" marker-end="url(#a13)"/>
+
+            <rect class="dg-node dg-node--down" x="16" y="250" width="648" height="34" rx="6"/>
+            <text class="dg-s" x="34" y="272">阶段 4 · Contract 收缩：停止写旧字段 → 观察 → 删除。至此变更完成</text>
+          </svg>
+          <p class="diagram__cap"><b>图 09-A</b> Expand / Contract 四阶段。<strong>整个过程任何一步都可以安全回滚</strong>，因为新旧格式始终并存。这是交易系统做破坏性变更的唯一安全方式 —— 慢，但不会出事。</p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">09.2</span>灰度与回滚：让问题只影响一小部分人</h2>
+
+        <p>
+          灰度的本质是<strong>把风险切成小块</strong>。一次全量发布的爆炸半径是 100%，
+          而 1% 灰度下同样的问题只影响 1% 的用户 —— 这给了你发现并回滚的机会。
+        </p>
+
+        <h3 class="sub" id="s2-1">交易系统的灰度维度</h3>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>维度</th><th>适用场景</th><th>风险</th></tr></thead>
+            <tbody>
+              <tr><td>按交易对</td><td>撮合逻辑变更</td><td>低 —— 影响范围明确，且可以选择流动性小的交易对先试</td></tr>
+              <tr><td>按用户</td><td>业务逻辑、界面变更</td><td>中 —— 需要保证同一用户始终路由到同一版本，否则体验错乱</td></tr>
+              <tr><td>按机器</td><td>性能优化、底层组件升级</td><td>中 —— 需保证同一交易对不被拆分到不同版本，否则撮合结果不一致</td></tr>
+              <tr><td>影子流量</td><td>高风险的资金逻辑变更</td><td>最低 —— 新逻辑只计算不生效，与旧逻辑比对结果</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">灰度的一个硬约束</span>
+          <p>
+            <strong>同一个交易对不能同时由两个版本的撮合内核处理。</strong>
+            灰度「按机器」时，必须确保路由规则把同一交易对的所有订单
+            送到同一版本的实例上。否则会出现「A 实例撮合了一部分订单，
+            B 实例撮合了另一部分」的情况 ——
+            两边的订单簿不一致，撮合结果不可复现，这是灾难性的。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s2-2">回滚必须是一键的</h3>
+
+        <p>
+          回滚流程如果在故障时才第一次执行，几乎一定失败。
+          它必须满足三个条件：
+        </p>
+
+        <ol class="steps">
+          <li><b>已演练过</b><span>回滚不是理论上的操作，而是在预发环境反复执行过的标准动作。每次发布前都应当明确「这次发布的回滚命令是什么」。</span></li>
+          <li><b>不依赖发布者</b><span>回滚权限不能只掌握在发布者手里。半夜出故障时，值班人员必须能独立执行回滚，而不需要等某个特定的人上线。</span></li>
+          <li><b>有明确判据</b><span>什么情况下必须回滚，要预先定义。例如「错误率超过 1% 持续 2 分钟」或「对账差异出现」。不能靠现场临时讨论。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">回滚不是失败</span>
+          <p>
+            团队文化上必须明确：<strong>快速回滚是正确决策，不是能力不足</strong>。
+            如果回滚被当成「丢脸的事」，工程师会倾向于「再观察一下」「可能马上就恢复了」——
+            而这段时间正是损失扩大的窗口。好的团队会奖励「果断回滚」。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">09.3</span>容量规划：为峰值而不是平均值准备</h2>
+
+        <p>
+          交易系统的流量有两个特征：<strong>波动剧烈</strong>与<strong>不可预测</strong>。
+          平静时段与极端行情下的负载可能相差几十倍，
+          而极端行情往往伴随新闻事件，无法提前准确预判。
+        </p>
+
+        <h3 class="sub" id="s3-1">容量的三层余量</h3>
+
+        <ul class="list-lines">
+          <li><span class="k">日常</span><span class="v"><b>资源使用率 ≤ 40%</b>。留出足够空间应对日常波动，同时保持较低的基础成本。</span></li>
+          <li><span class="k">突发</span><span class="v"><b>能承受 3 倍日常峰值</b>。这是「行情异动」级别的流量，应当能在不扩容的情况下扛住，因为扩容需要时间。</span></li>
+          <li><span class="k">极端</span><span class="v"><b>有降级预案</b>。当流量超过承受能力时，主动关闭非核心功能（如历史数据查询、排行榜、K 线历史加载），把资源让给撮合与结算。</span></li>
+        </ul>
+
+        <div class="note note--gold">
+          <span class="note__tag">降级优先级的定义</span>
+          <p>
+            降级不是「关掉一些功能」，而是<strong>预先排好序</strong>。
+            必须明确哪些功能在任何情况下都不能关，哪些可以牺牲：
+          </p>
+          <p>
+            <em>不可降级</em>：撮合、结算、提现风控、账户安全<br>
+            <em>可延迟</em>：行情推送频率、K 线历史加载、统计分析<br>
+            <em>可关闭</em>：排行榜、活动页面、社交功能、资讯内容
+          </p>
+        </div>
+
+        <h3 class="sub" id="s3-2">扩容速度决定容错能力</h3>
+
+        <p>
+          有弹性的系统与没弹性的系统，差距不在于「能不能扩容」，
+          而在于<strong>扩容需要多久</strong>。无状态服务可以在几分钟内扩容完毕；
+          有状态的撮合内核扩容需要重新加载订单簿快照，
+          可能耗时几十分钟。因此：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>无状态服务</strong> —— 按 CPU/内存水位自动扩缩容，这是最成熟的部分。</li>
+          <li><strong>有状态服务</strong> —— 必须预留固定余量，不能依赖弹性扩容。因为扩容时间太长，等它扩起来，峰值可能已经过去了。</li>
+          <li><strong>数据库</strong> —— 最不弹性的一层。分库分表的方案必须提前设计，临时加库需要数据迁移，可能耗时数天。</li>
+        </ul>
+
+        <h2 class="sec" id="s4"><span class="sec__no">09.4</span>SLO 与告警：把「稳定」变成可计算的数字</h2>
+
+        <p>
+          「尽力保证稳定」是一句没有约束力的话。
+          SLO 把它变成一个可以计算、可以追责、可以用来做决策的数字。
+        </p>
+
+        <h3 class="sub" id="s4-1">错误预算：让稳定与迭代不再打架</h3>
+
+        <p>
+          错误预算是 SLO 最有价值的部分。它把「这个月还能不能发新功能」
+          从主观争论变成了算术：
+        </p>
+
+        <div class="spec">
+          <div><dt>可用性 SLO</dt><dd><span class="big">99.95%</span><p class="sm">月度目标</p></dd></div>
+          <div><dt>错误预算</dt><dd><span class="big">0.05%</span><p class="sm">每月允许的失败比例</p></dd></div>
+          <div><dt>折算时间</dt><dd><span class="big">21.9 分</span><p class="sm">每月允许的不可用时长</p></dd></div>
+          <div><dt>预算耗尽</dt><dd><span class="big">停发</span><p class="sm">停止新功能发布，全力修稳定性</p></dd></div>
+        </div>
+
+        <p>
+          这个机制的精妙之处在于它同时约束了两个方向：
+          既防止团队为了稳定而完全停止迭代（预算没用完就该大胆发），
+          也防止团队为了迭代而忽视稳定性（预算烧完就必须停下）。
+        </p>
+
+        <h3 class="sub" id="s4-2">告警分级与响应</h3>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>级别</th><th>判据</th><th>响应方式</th><th>示例</th></tr></thead>
+            <tbody>
+              <tr><td>P0</td><td>资金正在流失 / 核心链路完全不可用</td><td>立即电话呼叫，全员响应</td><td>对账差异非零、撮合停止、提现异常</td></tr>
+              <tr><td>P1</td><td>核心功能严重降级</td><td>15 分钟内响应</td><td>下单延迟超阈值、部分交易对异常</td></tr>
+              <tr><td>P2</td><td>非核心功能异常</td><td>工作时间处理</td><td>行情推送延迟、历史数据加载慢</td></tr>
+              <tr><td>P3</td><td>需要关注但无需即时处理</td><td>工单跟踪</td><td>磁盘使用率上升、证书即将过期</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--info">
+          <span class="note__tag">告警的第一原则</span>
+          <p>
+            <strong>每条告警都必须可行动。</strong>
+            如果一条告警响了，值班的人看了之后不知道该做什么 ——
+            这条告警就应该被删掉或改成仪表盘上的一个指标。
+            告警疲劳是最危险的安全隐患之一：当噪音太多时，
+            真正重要的告警也会被忽略。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5"><span class="sec__no">09.5</span>事故管理：从混乱到有序</h2>
+
+        <p>
+          事故现场最容易出现的问题不是「没人处理」，而是<strong>所有人都在处理</strong>——
+          几个人同时改配置、重启服务、执行 SQL，互相不知道对方在做什么，
+          结果把小问题搞成大事故。
+        </p>
+
+        <h3 class="sub" id="s5-1">角色分离</h3>
+
+        <div class="grid-cards">
+          <article><span class="no">ROLE 01</span><h4>事故指挥官</h4><p>只做决策与协调，不亲自操作。决定是否升级、是否止损、何时对外沟通。这个角色必须明确指定，不能默认由「最资深的人」兼任。</p></article>
+          <article><span class="no">ROLE 02</span><h4>操作执行者</h4><p>唯一有权执行变更的人。所有操作向指挥官汇报。避免多人同时操作造成冲突。</p></article>
+          <article><span class="no">ROLE 03</span><h4>记录员</h4><p>记录时间线：什么时候发现了什么、做了什么、结果如何。这些记录是后续复盘的基础，也是对外说明的依据。</p></article>
+          <article><span class="no">ROLE 04</span><h4>沟通负责人</h4><p>负责对内同步进展、对外发布公告。让技术团队专注技术，不被问询打断。</p></article>
+        </div>
+
+        <h3 class="sub" id="s5-2">复盘：对事不对人</h3>
+
+        <p>
+          复盘的目的不是找出「谁的责任」，而是找出<strong>「系统为什么会允许这个错误发生」</strong>。
+          这是两种完全不同的思路，结果也完全不同。
+        </p>
+
+        <div class="compare">
+          <div class="bad">
+            <h5>追责式复盘</h5>
+            <ul>
+              <li>「谁改的配置？」</li>
+              <li>「为什么不按流程操作？」</li>
+              <li>结果是：以后没人敢承认错误，事故被隐瞒</li>
+              <li>真正的问题（流程缺陷、工具缺失）永远得不到修复</li>
+            </ul>
+          </div>
+          <div class="good">
+            <h5>系统式复盘</h5>
+            <ul>
+              <li>「为什么这个配置能被直接改到生产？」</li>
+              <li>「为什么流程没有拦住这个操作？」</li>
+              <li>结果是：暴露流程与工具的缺陷，并修复它们</li>
+              <li>承认「人会犯错」是前提，因此要靠系统而非自觉来防护</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">复盘的核心产出</span>
+          <p>
+            复盘报告的价值不在「结论」，而在<strong>可执行的改进项</strong>。
+            每一条改进项必须有：明确的负责人、明确的完成时间、
+            以及可验证的完成标准（例如「上线配置变更审批流程，且有一次成功的拦截记录」）。
+            没有这些，复盘就只是一次集体情绪释放。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">09.6</span>灾备与多活：为最坏的情况做准备</h2>
+
+        <p>
+          灾备的核心问题不是「怎么备份数据」，而是
+          <strong>「多快能恢复服务，以及能接受丢多少数据」</strong>。
+          这两个数字定义了整个灾备方案的投入规模。
+        </p>
+
+        <div class="spec">
+          <div><dt>RTO</dt><dd><span class="big">恢复时间</span><p class="sm">Recovery Time Objective —— 从故障到服务恢复的目标时长</p></dd></div>
+          <div><dt>RPO</dt><dd><span class="big">数据丢失</span><p class="sm">Recovery Point Objective —— 可接受的最大数据丢失量</p></dd></div>
+        </div>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>方案</th><th>RTO</th><th>RPO</th><th>成本</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>冷备</td><td>小时级</td><td>小时级</td><td>低</td><td>定期备份，故障时从备份恢复。适合非核心系统</td></tr>
+              <tr><td>温备</td><td>分钟级</td><td>秒级</td><td>中</td><td>备用环境持续同步数据但不承载流量，故障时切换</td></tr>
+              <tr><td>热备 / 多活</td><td>秒级</td><td>接近零</td><td>高</td><td>多机房同时承载流量，故障时自动切换。交易系统核心链路的标准</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">多活最容易被忽略的部分</span>
+          <p>
+            <strong>「脑裂」比「宕机」更可怕。</strong>
+            多活架构下，如果两个机房之间的网络中断，
+            两边都以为对方挂了并各自接管服务，
+            就会出现两个「主」—— 用户可能在两边分别下单，
+            而两边各自维护的账本互不知情。
+          </p>
+          <p>
+            解决这个问题的唯一办法是<strong>多数派仲裁</strong>：
+            只有拿到多数节点投票的一侧才能提供服务。
+            少数派一侧必须主动停止服务，即使它是「好的」。
+            这牺牲了可用性，换来了正确性 —— 对资金系统而言，这是唯一正确的取舍。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s6-1">切换必须演练</h3>
+
+        <p>
+          灾备方案如果从未真正切换过，那它只是文档。
+          定期演练的要求：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>真实切换</strong> —— 在低峰期真实地把流量切到备用机房，而不是「模拟」。只有真实切换才能暴露配置、权限、数据同步的问题。</li>
+          <li><strong>包含回切</strong> —— 切过去之后还要切回来。回切往往比去程更容易出问题，因为回程时备用侧已经积累了一段数据需要同步。</li>
+          <li><strong>有对账验证</strong> —— 切换后必须跑完整对账，确认资金守恒。切换过程中如果丢失了事件，账本就会出现差异。</li>
+        </ul>
+
+        <h2 class="sec" id="s7"><span class="sec__no">09.7</span>长期演进：不要推倒重来</h2>
+
+        <p>
+          一个交易系统会在未来几年里持续面对新币种、新业务线、
+          新监管要求和新的攻击手法。能否活下来，取决于架构是否留了演进空间。
+        </p>
+
+        <h3 class="sub" id="s7-1">演进的三条路径</h3>
+
+        <ol class="steps">
+          <li><b>纵向：单交易对性能提升</b><span>通过优化撮合内核、改进数据结构、升级硬件来提升单分片的处理能力。这条路有天花板，但在到达天花板之前收益最直接。</span></li>
+          <li><b>横向：增加交易对分片</b><span>把新的交易对部署到新的分片实例上。这条路几乎没有上限，但要求架构从一开始就按交易对分片设计 —— 事后拆分的代价极高。</span></li>
+          <li><b>业务维度：新增业务线</b><span>在账本层之上增加新的业务模块。这是最健康的演进方式，因为账本层稳定不变，新业务只是它的新消费者。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">判断架构是否健康的唯一标准</span>
+          <p>
+            <strong>加一个新业务线，需要改多少现有代码？</strong>
+          </p>
+          <p>
+            如果答案是「只需要新增一个服务，账本和撮合一行都不用改」——
+            说明架构健康。如果答案是「要改账本结构、要动撮合逻辑、要重新设计订单模型」——
+            说明架构已经积累了严重的技术债，下一次业务扩展会更痛。
+          </p>
+          <p>
+            这个判断标准简单、可量化，而且几乎不会出错。
+            它也是本站在第 01 章就强调「账本是唯一资金事实来源」的原因 ——
+            把最稳定的部分做扎实，上面的东西才能随便长。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s7-2">技术债的偿还优先级</h3>
+
+        <p>
+          回顾第 00 章的分类，在演进阶段要特别警惕第三类：
+        </p>
+
+        <div class="grid-cards">
+          <article><span class="no">无息债</span><h4>可以挂着</h4><p>命名不好、注释过时、某个工具类不够优雅。不影响功能，不影响开发速度，不必焦虑。</p></article>
+          <article><span class="no">有息债</span><h4>尽快偿还</h4><p>每次改需求都要额外付出成本的部分。例如费率硬编码在撮合里。它每天都在收利息。</p></article>
+          <article><span class="no">致命债</span><h4>立刻停下手上一切去还</h4><p>平时不显形，一旦触发就造成资金损失。例如用浮点算金额、用时间戳做幂等键、缺失对账。这类债不是「要不要还」的问题。</p></article>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 09 章 · 检查清单</span>
+          <p>
+            ① 所有变更向后兼容，破坏性变更走 Expand / Contract 四阶段；<br>
+            ② 灰度维度明确，同一交易对不由两个版本处理；<br>
+            ③ 回滚一键执行、已演练、不依赖特定人员、有明确判据；<br>
+            ④ 容量规划留三层余量，降级优先级预先定义；<br>
+            ⑤ SLO 与错误预算上线，用预算决定是否继续发布；<br>
+            ⑥ 告警分级明确，每条告警都可行动；<br>
+            ⑦ 事故有角色分离，复盘对事不对人，改进项可追踪；<br>
+            ⑧ RTO/RPO 明确，多活采用多数派仲裁避免脑裂，切换定期演练；<br>
+            ⑨ 用「加新业务要改多少代码」衡量架构健康度。
+          </p>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">写在最后</span>
+          <p>
+            十章走完，回到最开始的那个问题：<strong>软件是怎么被造出来的？</strong>
+          </p>
+          <p>
+            答案不是某个技术栈、某个架构模式，而是一连串具体的判断：
+            在什么位置拒绝请求、把哪一步做成串行、让谁来验证真实性、
+            当假设失效时靠什么兜底。这些判断的共同点是 ——
+            它们都源于对「可能出什么错」的清醒认识，而不是对「应该能跑通」的乐观预期。
+          </p>
+          <p>
+            交易系统之所以是个好标本，是因为它不允许含糊：
+            钱多一分少一分，都会被立刻发现。这种严苛的反馈，
+            恰恰是打磨工程判断力最好的环境。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

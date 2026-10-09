@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>07 · 界面设计 — 交易系统工程</title>
+<meta name="description" content="交易终端的信息架构、排印尺度、色彩语义与数据密度，盘口、深度图、K 线、下单面板的设计要点，以及无障碍与设计交付。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="07-interface">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">07</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Interface</span>
+          <span class="dot"></span>
+          <span class="eyebrow">7 节 · 约 24 分钟</span>
+        </div>
+        <h1>界面设计：交易终端的信息设计</h1>
+        <p class="chapter-head__lede">
+          交易界面是最难设计的界面之一：信息量极大、变化极快、
+          用户在高压力下操作、错误代价是真金白银。
+          这一章讲的是如何在这样的约束下做出既好看又好用的界面 ——
+          核心不是「美观」，而是<strong>信息层级与操作容错</strong>。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>交易界面如何在高信息密度下保持清晰与安全</dd></div>
+          <div><dt>关键产出</dt><dd>布局栅格 · 排印尺度 · 色彩语义 · 组件规范</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch07-interface.webp" width="1200" height="675"
+               alt="层叠的深色玻璃面板，表面有金色折线与发光数据网格" decoding="async">
+        </div>
+        <figcaption><b>FIG 07</b> 交易界面的本质是一组叠放的玻璃板：每一块承担一个明确的信息职责。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">07.1</span>信息架构：先决定什么最重要</h2>
+
+        <p>
+          交易终端的屏幕空间是稀缺资源，而候选信息有几十种。
+          设计的第一步不是「怎么排得好看」，而是<strong>排优先级</strong>。
+          判据只有一个：<em>用户在做决策的那一刻，需要看到什么？</em>
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 372" role="img" aria-label="交易终端布局栅格">
+            <!-- 顶部工具条 -->
+            <rect class="dg-node" x="16" y="16" width="648" height="30" rx="4"/>
+            <text class="dg-s" x="28" y="35">交易对选择 · 最新价 · 24h 涨跌 · 24h 量 · 我的持仓概览</text>
+
+            <!-- 左：盘口 -->
+            <rect class="dg-node dg-node--up" x="16" y="54" width="152" height="186" rx="4"/>
+            <text class="dg-t" x="28" y="74">盘口</text>
+            <text class="dg-s" x="28" y="94">卖五 ~ 卖一</text>
+            <text class="dg-s" x="28" y="112">价差</text>
+            <text class="dg-s" x="28" y="130">买一 ~ 买五</text>
+            <text class="dg-s" x="28" y="156">深度条背景</text>
+            <text class="dg-s" x="28" y="174">最新成交价</text>
+            <text class="dg-s" x="28" y="200">点击价位</text>
+            <text class="dg-s" x="28" y="218">自动填入下单价</text>
+            <text class="dg-label" x="92" y="234" text-anchor="middle">最高频交互</text>
+
+            <!-- 中：图表 -->
+            <rect class="dg-node dg-node--gold" x="176" y="54" width="320" height="186" rx="4"/>
+            <text class="dg-t" x="188" y="74">K 线图 / 深度图</text>
+            <text class="dg-s" x="188" y="96">主图区 —— 占据最大面积</text>
+            <text class="dg-s" x="188" y="116">周期切换 · 指标叠加</text>
+            <text class="dg-s" x="188" y="136">成交量副图</text>
+            <text class="dg-s" x="188" y="158">十字光标 + 数值提示</text>
+            <text class="dg-s" x="188" y="180">当前持仓成本线</text>
+            <text class="dg-s" x="188" y="202">委托单标记</text>
+            <text class="dg-label" x="336" y="228" text-anchor="middle">视觉重心 · 不做交互竞争</text>
+
+            <!-- 右：下单 -->
+            <rect class="dg-node dg-node--gold" x="504" y="54" width="160" height="186" rx="4"/>
+            <text class="dg-t" x="516" y="74">下单面板</text>
+            <text class="dg-s" x="516" y="96">买入 / 卖出切换</text>
+            <text class="dg-s" x="516" y="114">限价 / 市价 / 条件单</text>
+            <text class="dg-s" x="516" y="132">价格 · 数量</text>
+            <text class="dg-s" x="516" y="150">百分比快捷按钮</text>
+            <text class="dg-s" x="516" y="168">可用余额</text>
+            <text class="dg-s" x="516" y="186">预计成交额</text>
+            <text class="dg-s" x="516" y="212">提交按钮</text>
+            <text class="dg-label" x="584" y="234" text-anchor="middle">最高风险 · 需最大容错</text>
+
+            <!-- 下方：持仓与委托 -->
+            <rect class="dg-node" x="16" y="248" width="400" height="106" rx="4"/>
+            <text class="dg-t" x="28" y="268">当前委托 / 历史成交</text>
+            <text class="dg-s" x="28" y="288">表格：时间 · 交易对 · 方向 · 价格 · 数量 · 已成交 · 状态</text>
+            <text class="dg-s" x="28" y="306">行内操作：撤单（一键，但需确认）</text>
+            <text class="dg-s" x="28" y="324">状态用色彩 + 文字双重编码，不单靠颜色</text>
+            <text class="dg-s" x="28" y="342">排序与筛选：默认按时间倒序，最新在最上</text>
+
+            <rect class="dg-node" x="424" y="248" width="240" height="106" rx="4"/>
+            <text class="dg-t" x="436" y="268">持仓 / 资产</text>
+            <text class="dg-s" x="436" y="288">币种 · 总量 · 可用 · 冻结</text>
+            <text class="dg-s" x="436" y="306">估值 · 占比</text>
+            <text class="dg-s" x="436" y="324">盈亏（含未实现）</text>
+            <text class="dg-s" x="436" y="342">快捷划转入口</text>
+          </svg>
+          <p class="diagram__cap"><b>图 07-A</b> 经典四区布局。<strong>面积分配反映优先级</strong>：图表占据最大面积，因为它承载决策依据；下单面板面积不大但位置固定，因为它需要被反复触达；盘口窄而高，因为它是纵向排列的价格序列。</p>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">布局的铁律</span>
+          <p>
+            <strong>下单面板的位置在任何情况下都不能变。</strong>
+            用户在高频操作中会形成肌肉记忆 —— 买入按钮在哪、数量输入框在哪。
+            如果因为行情波动导致布局跳动（比如价格位数变化把按钮挤走），
+            用户可能误点。任何会改变下单区布局的动态内容都必须被约束。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">07.2</span>排印：让数字成为主角</h2>
+
+        <p>
+          交易界面的文字 80% 是数字。因此排印的第一原则是：
+          <strong>数字必须用等宽字体</strong>。
+        </p>
+
+        <p>
+          比例字体（如普通无衬线体）中，<code>1</code> 比 <code>8</code> 窄。
+          这会导致价格数字在跳动时左右抖动，难以快速比较。
+          等宽字体（tabular figures）让每个数字占同样的宽度，
+          整列数字对齐，扫视效率大幅提升。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">CSS · 数字排印</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">/* 关键：tabular-nums 让数字等宽，slashed-zero 区分 0 和 O */</span>
+<span class="k">.price</span>, <span class="k">.qty</span>, <span class="k">.pnl</span> {
+  <span class="k">font-variant-numeric</span>: tabular-nums slashed-zero;
+  <span class="k">font-feature-settings</span>: <span class="s">"tnum"</span> 1, <span class="s">"zero"</span> 1;
+  <span class="k">font-family</span>: ui-monospace, <span class="s">"SF Mono"</span>, <span class="s">"Cascadia Mono"</span>, monospace;
+  <span class="k">letter-spacing</span>: -0.01em;   <span class="c">/* 等宽下略微收紧，避免松散 */</span>
+}
+
+<span class="c">/* 小数部分弱化 —— 让整数位成为视觉焦点 */</span>
+<span class="k">.price .int</span> { <span class="k">color</span>: var(--ink); }
+<span class="k">.price .dec</span> { <span class="k">color</span>: var(--ink-3); <span class="k">font-size</span>: .85em; }
+
+<span class="c">/* 数字变化时的闪烁提示：向上绿色、向下红色（涨红跌绿）*/</span>
+<span class="k">@keyframes</span> flash-up   { <span class="k">from</span> { <span class="k">background</span>: rgba(47,163,107,.22) } <span class="k">to</span> { <span class="k">background</span>: transparent } }
+<span class="k">@keyframes</span> flash-down { <span class="k">from</span> { <span class="k">background</span>: rgba(229,72,77,.22) }  <span class="k">to</span> { <span class="k">background</span>: transparent } }
+<span class="k">.tick-up</span>   { <span class="k">animation</span>: flash-up .5s ease-out; }
+<span class="k">.tick-down</span> { <span class="k">animation</span>: flash-down .5s ease-out; }</pre>
+        </div>
+
+        <h3 class="sub" id="s2-1">字号层级</h3>
+
+        <p>
+          交易界面的字号对比不需要像营销页面那么夸张，但层级必须清晰。
+          一个可用的尺度：
+        </p>
+
+        <div class="spec">
+          <div><dt>最新价</dt><dd><span class="big">28px</span><p class="sm">页面最大字号，唯一的视觉锚点</p></dd></div>
+          <div><dt>盘口价格</dt><dd><span class="big">13px</span><p class="sm">等宽，一屏能显示 10 档以上</p></dd></div>
+          <div><dt>表格数据</dt><dd><span class="big">12px</span><p class="sm">行高 1.6，兼顾密度与可读</p></dd></div>
+          <div><dt>标签说明</dt><dd><span class="big">10px</span><p class="sm">字距拉开，弱化为灰色</p></dd></div>
+        </div>
+
+        <div class="note note--info">
+          <span class="note__tag">不要超过三级</span>
+          <p>
+            交易界面信息密度高，字号层级超过三级会显得杂乱。
+            实践中用「大 / 中 / 小」三级就够，
+            层级之间的区分更多依赖<strong>颜色与字重</strong>，而不是字号。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">07.3</span>色彩语义：颜色必须承载信息</h2>
+
+        <p>
+          交易界面的色彩不是装饰，而是<strong>语义编码</strong>。
+          用户在扫视时，颜色先于文字被识别。
+        </p>
+
+        <h3 class="sub" id="s3-1">涨跌色：中国习惯与全球习惯的差异</h3>
+
+        <div class="compare">
+          <div class="good">
+            <h5>中国习惯（红涨绿跌）</h5>
+            <ul>
+              <li>上涨 = 红色（喜庆、热烈）</li>
+              <li>下跌 = 绿色</li>
+              <li>适用于中国大陆用户的股票、期货类产品</li>
+              <li>红色 #E5484D · 绿色 #2FA36B</li>
+            </ul>
+          </div>
+          <div class="bad">
+            <h5>欧美习惯（绿涨红跌）</h5>
+            <ul>
+              <li>上涨 = 绿色（go、安全）</li>
+              <li>下跌 = 红色（危险、停止）</li>
+              <li>国际主流交易平台普遍采用</li>
+              <li>同一套色值，语义相反</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">必须做成可配置</span>
+          <p>
+            这是交易产品里最容易造成<strong>灾难性误操作</strong>的设计点。
+            一个习惯红涨绿跌的用户，在国际平台上看到满屏绿色，
+            可能瞬间理解为「大涨」而做出错误决策。
+            因此：① 涨跌色必须可在设置中切换；
+            ② 切换时给出明确提示；
+            ③ <strong>颜色不能是唯一的编码方式</strong> ——
+            必须同时有 <code>+</code>/<code>−</code> 符号或箭头。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s3-2">状态色与功能色</h3>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>语义</th><th>用途</th><th>设计要点</th></tr></thead>
+            <tbody>
+              <tr><td>买 / 做多</td><td>买入按钮、买盘背景、多头持仓</td><td>使用涨色系。按钮饱和度要足够高，确保一眼可辨</td></tr>
+              <tr><td>卖 / 做空</td><td>卖出按钮、卖盘背景、空头持仓</td><td>使用跌色系。与买入按钮在色相上必须差距极大</td></tr>
+              <tr><td>中性 / 信息</td><td>链接、可点击元素、提示</td><td>用低饱和的冷色，避免与涨跌色混淆</td></tr>
+              <tr><td>警示</td><td>风险提示、强平预警</td><td>用橙色系，区别于纯红（涨色），避免语义冲突</td></tr>
+              <tr><td>禁用 / 不可用</td><td>无权限、余额不足的按钮</td><td>降低不透明度 + 移除 hover 反馈 + 明确原因提示</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">暗色主题的一个陷阱</span>
+          <p>
+            在暗色背景上，高饱和度的红绿会显得刺眼且产生视觉残影
+            （盯着看久了，移开视线会看到补色）。因此暗色主题下
+            <strong>应当降低饱和度、提高明度</strong>：
+            用 <code>#E5484D</code> 而不是 <code>#FF0000</code>，
+            用 <code>#2FA36B</code> 而不是 <code>#00FF00</code>。
+            同时用低不透明度的同色作为背景填充（如 10% 透明度），
+            比直接填充纯色更耐看。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">07.4</span>数据密度：在有限屏幕里放最多信息</h2>
+
+        <p>
+          交易用户是「专业用户」，他们需要的是<strong>密度</strong>而不是留白。
+          把营销页面的「大留白、大圆角」搬进交易界面，结果是用户要不断滚动才能看到关键数据。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>维度</th><th>营销页面的做法</th><th>交易界面的做法</th></tr></thead>
+            <tbody>
+              <tr><td>行高</td><td>1.8 ~ 2.0</td><td>1.4 ~ 1.6（表格可到 1.35）</td></tr>
+              <tr><td>圆角</td><td>16 ~ 24px</td><td>2 ~ 6px，甚至直角</td></tr>
+              <tr><td>内边距</td><td>32 ~ 48px</td><td>8 ~ 16px</td></tr>
+              <tr><td>分隔方式</td><td>卡片 + 阴影</td><td>1px 细线，或仅靠行间距</td></tr>
+              <tr><td>颜色数量</td><td>3 ~ 5 种</td><td>2 ~ 3 种（中性 + 涨 + 跌）</td></tr>
+              <tr><td>动效</td><td>丰富，强调惊喜</td><td>克制，只用于数值变化的提示</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub" id="s4-1">密度的边界在哪</h3>
+
+        <p>
+          密度不是越密越好。有三个硬性下限不能突破：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>可点击元素的高度 ≥ 28px</strong> —— 低于这个值，误触率会显著上升。撤单按钮尤其要注意，误触会造成实际损失。</li>
+          <li><strong>正文对比度 ≥ 4.5:1</strong> —— 暗色背景上的灰色文字最容易踩这条线。用工具实测，不要凭感觉。</li>
+          <li><strong>相邻数值至少留 8px 间隙</strong> —— 否则在快速扫视时会读错列。</li>
+        </ul>
+
+        <h2 class="sec" id="s5"><span class="sec__no">07.5</span>核心组件：盘口、深度图、K 线</h2>
+
+        <h3 class="sub" id="s5-1">盘口：背景条是核心设计</h3>
+
+        <p>
+          盘口每一档除了价格与数量，还有一个<strong>按数量比例绘制的背景条</strong>。
+          这个背景条让用户不用读数字就能感知买卖力量的对比。
+          设计要点：
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">比例</span><span class="v"><b>相对最大值而非绝对值</b>。如果按绝对值，遇到异常大单时其他档位的条会全部缩成一条线。应当以当前可见档位中的最大量为基准。</span></li>
+          <li><span class="k">方向</span><span class="v"><b>买盘从右向左、卖盘从左向右</b>，让两侧的条形成对称的「力量对撞」视觉，直观反映买卖压力。</span></li>
+          <li><span class="k">透明度</span><span class="v"><b>10% ~ 18%</b>。太高会干扰数字阅读，太低则看不见。</span></li>
+          <li><span class="k">更新</span><span class="v"><b>不做过渡动画</b>。盘口每秒变化多次，动画会导致视觉滞后与抖动，反而降低可读性。</span></li>
+        </ul>
+
+        <h3 class="sub" id="s5-2">深度图：面积图而非折线图</h3>
+
+        <p>
+          深度图展示「不同价格下的累计挂单量」，它必须用<strong>面积图</strong> ——
+          因为用户关心的是「吃掉多少量能把价格推到某个位置」，
+          这正是面积（积分）的含义，而不是某一点的值。
+        </p>
+
+        <div class="note note--info">
+          <span class="note__tag">一个常见错误</span>
+          <p>
+            很多深度图用折线连接离散的价位点，结果曲线看起来平滑，
+            但实际含义被扭曲了。正确做法是<strong>阶梯状（step）绘制</strong> ——
+            因为订单簿的累计量在价位之间是恒定的，只在跨越价位时跳跃。
+            用阶梯线才能真实反映「吃穿一档后的价格变化」。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s5-3">K 线：不要重新发明</h3>
+
+        <p>
+          K 线图有几十年的行业惯例，用户已经形成强预期。
+          设计上的自由度很小，重点在于：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>实体与影线的比例要克制</strong> —— 实体宽度约为周期的 60%~75%，太宽会让密集的 K 线糊成一片。</li>
+          <li><strong>十字光标必须实时显示数值</strong> —— 鼠标所在位置的价格、时间、对应 K 线的 OHLC。这是高频使用的功能。</li>
+          <li><strong>持仓成本线要常驻</strong> —— 用户最关心「我什么时候回本」，这条线比任何指标都重要。</li>
+          <li><strong>委托单标记</strong> —— 在图表上标出未成交订单的价格位置，让用户一眼看到「我的单挂在哪」。</li>
+        </ul>
+
+        <h2 class="sec" id="s6"><span class="sec__no">07.6</span>下单面板：最容易出错的界面</h2>
+
+        <p>
+          下单是唯一一个「点错就真的亏钱」的界面。
+          它需要比其他所有界面都更强的容错设计。
+        </p>
+
+        <ol class="steps">
+          <li><b>买卖必须一眼可辨</b><span>买入与卖出按钮不能只靠颜色区分（色盲用户无法分辨）。应当同时有文字、位置、形状的差异。买入按钮与卖出按钮的间距要足够大，避免误触。</span></li>
+          <li><b>数量输入提供百分比快捷键</b><span>25% / 50% / 75% / 100% 是高频操作。注意「100%」在买单时指的是「用全部可用资金能买多少」，需要按当前价格反算，并留出手续费空间。</span></li>
+          <li><b>实时显示预计成交额</b><span>用户输入数量后，立即显示「预计花费 xxx USDT」。这一行数字能拦住大量因为小数点输错导致的错误下单。</span></li>
+          <li><b>提交前做二次确认（可配置）</b><span>大额订单或首次交易时弹出确认框，显示完整信息。熟练用户可以关闭确认以提升速度 —— 但要确保这个开关不会被误触。</span></li>
+          <li><b>提交后立即给出明确反馈</b><span>按钮进入 loading 态并禁用，防止重复提交。成功与失败都要有明确提示，失败必须说明原因（余额不足？价格超出笼子？交易对暂停？）。</span></li>
+          <li><b>错误信息要具体</b><span>「下单失败」是无用信息。「可用余额不足，需要 4320.55 USDT，当前可用 4200.00 USDT」才是有用的。错误信息是产品体验的一部分。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">一个被低估的设计</span>
+          <p>
+            <strong>「价格笼子」的提示。</strong>当用户输入的价格偏离市场价超过阈值时，
+            不应只是拒绝，而应该提示「当前市价 43200，您输入的价格偏离 15%，
+            是否确认？」并给出「使用市价」的快捷按钮。
+            拒绝只解决了安全问题，提示则同时解决了安全问题与体验问题。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">07.7</span>无障碍、暗色模式与设计交付</h2>
+
+        <h3 class="sub" id="s7-1">无障碍不是可选项</h3>
+
+        <p>
+          金融产品的无障碍有实际的法律与商业意义。关键要求：
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">对比度</span><span class="v"><b>正文 ≥ 4.5:1，大字号 ≥ 3:1</b>。暗色主题下尤其要实测，很多「看起来还行」的灰色其实只有 3:1。</span></li>
+          <li><span class="k">色彩</span><span class="v"><b>不单独依赖颜色传达信息</b>。涨跌必须有符号，状态必须有文字，错误必须有图标 + 文案。</span></li>
+          <li><span class="k">键盘</span><span class="v"><b>全流程可键盘操作</b>。专业交易者大量使用键盘快捷键，这既是无障碍要求也是效率要求。</span></li>
+          <li><span class="k">焦点</span><span class="v"><b>焦点环必须可见</b>。用 <code>outline</code> 而不是 <code>box-shadow</code>，且不能被 <code>outline: none</code> 抹掉。</span></li>
+          <li><span class="k">动效</span><span class="v"><b>尊重 prefers-reduced-motion</b>。闪烁的价格变化对部分用户会造成不适，应提供关闭选项。</span></li>
+        </ul>
+
+        <h3 class="sub" id="s7-2">暗色模式：交易界面的默认选择</h3>
+
+        <p>
+          交易界面普遍默认暗色，原因有三个实际考量：
+        </p>
+
+        <ol class="steps">
+          <li><b>长时间盯盘的舒适度</b><span>交易者可能连续数小时盯着屏幕。亮色背景在长时间注视下更容易造成视觉疲劳。</span></li>
+          <li><b>色彩语义的可辨识度</b><span>在深色背景上，红绿涨跌色更突出。亮色背景下需要更高的饱和度才能达到同样的辨识度，反而刺眼。</span></li>
+          <li><b>多屏环境的协调</b><span>专业交易者常使用多屏，暗色背景在拼屏时视觉干扰更小。</span></li>
+        </ol>
+
+        <div class="note note--gold">
+          <span class="note__tag">暗色设计的三个要点</span>
+          <p>
+            <strong>① 不要用纯黑。</strong>纯黑（#000）与任何前景色的对比都过于极端，
+            长时间观看会产生光晕感。用 #0A0B0E ~ #14161A 这样的深灰更舒服。
+          </p>
+          <p>
+            <strong>② 层级靠明度而非阴影。</strong>暗色下阴影几乎不可见，
+            应当用背景的细微明度差异（如 #0D0F13 与 #12161C）加 1px 边框来建立层级。
+          </p>
+          <p>
+            <strong>③ 降低大面积高饱和色块。</strong>暗色背景下，一块高饱和的按钮
+            会显得异常刺眼。用降低饱和度、提高明度的方式保持辨识度。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s7-3">设计交付：让规范可以被执行</h3>
+
+        <p>
+          设计稿交付后最常见的失败是「实现出来不一样」。
+          避免这个问题的关键是把设计<strong>写成可执行的约束</strong>，而不是交付视觉稿。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">CSS · 设计令牌</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">/* 设计令牌：设计与实现共用的唯一事实来源 */</span>
+<span class="k">:root</span> {
+  <span class="c">/* 表面层级：用明度差异建立层级，不用阴影 */</span>
+  <span class="k">--surface-0</span>: #0A0B0E;   <span class="c">/* 页面底 */</span>
+  <span class="k">--surface-1</span>: #0D0F13;   <span class="c">/* 卡片 */</span>
+  <span class="k">--surface-2</span>: #12161C;   <span class="c">/* 抬起 / hover */</span>
+  <span class="k">--surface-3</span>: #171C24;   <span class="c">/* 选中 / 激活 */</span>
+
+  <span class="c">/* 分隔线：只比背景亮一点点 */</span>
+  <span class="k">--rule-strong</span>: rgba(255,255,255,.09);
+  <span class="k">--rule-weak</span>:   rgba(255,255,255,.045);
+
+  <span class="c">/* 文字：四级足够，且每级都满足对比度要求 */</span>
+  <span class="k">--ink-1</span>: #E8EBF0;  <span class="c">/* 主要 · 对比度 14.2:1 */</span>
+  <span class="k">--ink-2</span>: #A3ABB8;  <span class="c">/* 次要 · 7.1:1 */</span>
+  <span class="k">--ink-3</span>: #737B89;  <span class="c">/* 说明 · 4.6:1 ✓ 刚过线 */</span>
+  <span class="k">--ink-4</span>: #4A515C;  <span class="c">/* 仅用于装饰性文字，不承载信息 */</span>
+
+  <span class="c">/* 语义色：降饱和以适应暗色背景 */</span>
+  <span class="k">--up</span>:   #E5484D;  <span class="c">/* 涨 · 中国习惯 */</span>
+  <span class="k">--down</span>: #2FA36B;  <span class="c">/* 跌 */</span>
+
+  <span class="c">/* 间距：8 的倍数，形成节奏 */</span>
+  <span class="k">--sp-1</span>: 4px; <span class="k">--sp-2</span>: 8px; <span class="k">--sp-3</span>: 12px;
+  <span class="k">--sp-4</span>: 16px; <span class="k">--sp-5</span>: 24px; <span class="k">--sp-6</span>: 32px;
+
+  <span class="c">/* 圆角：交易界面克制使用 */</span>
+  <span class="k">--r-sm</span>: 2px; <span class="k">--r-md</span>: 4px; <span class="k">--r-lg</span>: 6px;
+}</pre>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 07 章 · 检查清单</span>
+          <p>
+            ① 布局优先级明确，下单面板位置固定不跳动；<br>
+            ② 所有数字使用等宽字体（tabular-nums + slashed-zero）；<br>
+            ③ 涨跌色可配置，且颜色不是唯一的编码方式；<br>
+            ④ 暗色主题不用纯黑，层级靠明度而非阴影；<br>
+            ⑤ 可点击元素高度 ≥ 28px，正文对比度 ≥ 4.5:1；<br>
+            ⑥ 盘口背景条按可见范围最大值比例绘制；<br>
+            ⑦ 深度图用阶梯面积图，不用平滑折线；<br>
+            ⑧ 下单面板有预计成交额、具体错误信息、防重复提交；<br>
+            ⑨ 设计令牌与实现共用，规范可执行。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

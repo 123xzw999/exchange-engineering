@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>06 · 网络安全 — 交易系统工程</title>
+<meta name="description" content="威胁建模、纵深防御、DDoS 与 WAF、应用层漏洞防护、业务风控与反自动化、密钥管理、内控四眼原则、数据安全与供应链、应急响应与攻防演练。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="06-security">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">06</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Security</span>
+          <span class="dot"></span>
+          <span class="eyebrow">9 节 · 约 34 分钟</span>
+        </div>
+        <h1>网络安全：如何扛住有组织的攻击</h1>
+        <p class="chapter-head__lede">
+          攻击者不会按你的架构图出牌。他们会找最薄的那一环，反复试，
+          直到找到能撬开的缝。这一章讲的是如何把系统做成「没有最薄的那一环」——
+          威胁建模、纵深防御、密钥管理、内控，以及当防线真的被突破时该怎么办。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>面对有组织的持续攻击，系统靠什么活下来</dd></div>
+          <div><dt>关键产出</dt><dd>威胁模型 · 纵深防御体系 · 密钥管理方案 · 应急响应预案</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch06-security.webp" width="1200" height="675"
+               alt="层层叠叠的半透明护盾，最外层正在挡开粒子流" decoding="async">
+        </div>
+        <figcaption><b>FIG 06</b> 纵深防御：最外层挡不住的，交给下一层。攻击者必须连续突破所有层才能触及资产。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">06.1</span>威胁建模：先搞清楚敌人在哪</h2>
+
+        <p>
+          安全建设最常见的失败不是「防护不够强」，而是<strong>防错了方向</strong>。
+          花大力气加固了 A 面墙，攻击者从没人看的 B 面进来。
+          威胁建模就是为了避免这种浪费。
+        </p>
+
+        <p>
+          一个实用的建模方法是按<strong>攻击者画像</strong>分类，因为不同画像的
+          能力、动机、持久度完全不同，对应的防护重点也不同。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>攻击者</th><th>能力</th><th>动机</th><th>主要手段</th><th>防护重点</th></tr></thead>
+            <tbody>
+              <tr><td>脚本小子</td><td>低，用现成工具</td><td>炫耀 / 小额获利</td><td>扫描器、已知漏洞利用、撞库</td><td>基础加固、WAF、限流</td></tr>
+              <tr><td>自动化黑产</td><td>中，有工具链</td><td>规模化获利</td><td>批量注册、薅羊毛、爬虫、撞库</td><td>设备指纹、行为风控、验证码</td></tr>
+              <tr><td>专业犯罪组织</td><td>高，有资金与耐心</td><td>直接盗取资产</td><td>钓鱼、供应链投毒、定向渗透、买通内部人员</td><td>密钥隔离、内控、审计、最小权限</td></tr>
+              <tr><td>内部人员</td><td>高，有合法权限</td><td>获利 / 报复</td><td>越权操作、数据导出、植入后门</td><td>四眼原则、权限分离、操作留痕</td></tr>
+              <tr><td>国家级行为体</td><td>极高，有 0day</td><td>情报 / 破坏</td><td>0day 利用、供应链攻击、长期潜伏</td><td>假设已失陷、零信任、快速检测与响应</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">建模的核心产出</span>
+          <p>
+            威胁建模的产出不是一份报告，而是<strong>一组「假设已被攻破」的应对方案</strong>。
+            对每个关键资产，问三个问题：攻击者要拿到它必须突破哪些环节？
+            突破后能造成多大损失？如何尽早发现？
+            第三个问题最重要 —— <em>假设失陷不可避免，检测与响应能力才是最终防线。</em>
+          </p>
+        </div>
+
+        <h3 class="sub" id="s1-1">攻击面梳理</h3>
+
+        <p>把系统所有「能被外部触达」的入口列全，是建模的第一步。常见的遗漏点：</p>
+
+        <ul class="bullets">
+          <li><strong>内部管理后台</strong> —— 往往比面向用户的系统更弱，却拥有更高权限。</li>
+          <li><strong>运维通道</strong> —— SSH、跳板机、CI/CD 系统。攻破 CI 等于可以往生产环境部署任意代码。</li>
+          <li><strong>第三方回调接口</strong> —— 支付回调、短信回调、链上 webhook。如果不验签，可以被伪造。</li>
+          <li><strong>移动端 App</strong> —— 可以被反编译，硬编码的密钥会直接暴露。</li>
+          <li><strong>依赖库</strong> —— 一个被投毒的 npm 包可以拿到构建环境的全部权限。</li>
+          <li><strong>员工个人设备</strong> —— 钓鱼邮件是最有效的入侵方式，没有之一。</li>
+        </ul>
+
+        <h2 class="sec" id="s2"><span class="sec__no">06.2</span>纵深防御：让攻击者必须连续成功</h2>
+
+        <p>
+          纵深防御（Defense in Depth）的核心思想是：
+          <strong>不假设任何单一防线不会被突破</strong>。
+          每一层都可能失效，但攻击者必须连续突破所有层才能拿到资产。
+          假设每层被突破的概率是 10%，五层叠起来就是 0.001%。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 452" role="img" aria-label="纵深防御的七层">
+            <defs>
+              <marker id="a11" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(229,72,77,.7)"/>
+              </marker>
+            </defs>
+
+            <!-- 攻击者 -->
+            <text class="dg-label" x="16" y="16" fill="rgba(229,72,77,.85)">攻击者从这里开始 →</text>
+
+            <rect class="dg-node dg-node--up" x="16" y="24" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="46">第 1 层 · 网络与流量</text>
+            <text class="dg-s" x="34" y="63">DDoS 清洗 · IP 信誉 · 地域封禁 · 四层限速 · 连接数限制</text>
+
+            <path class="dg-line" d="M340,70 V84" marker-end="url(#a11)"/>
+
+            <rect class="dg-node dg-node--up" x="16" y="86" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="108">第 2 层 · 边缘与 WAF</text>
+            <text class="dg-s" x="34" y="125">OWASP 规则 · 注入/XSS 拦截 · 爬虫识别 · 机器人验证 · 人机挑战</text>
+
+            <path class="dg-line" d="M340,132 V146" marker-end="url(#a11)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="148" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="170">第 3 层 · 认证与授权</text>
+            <text class="dg-s" x="34" y="187">强口令 + MFA / Passkey · 会话管理 · 签名校验 · 最小权限 · 越权检测</text>
+
+            <path class="dg-line" d="M340,194 V208" marker-end="url(#a11)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="210" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="232">第 4 层 · 业务风控</text>
+            <text class="dg-s" x="34" y="249">设备指纹 · 行为分析 · 频次异常 · 反薅羊毛 · 反洗钱规则 · 人工审核</text>
+
+            <path class="dg-line" d="M340,256 V270" marker-end="url(#a11)"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="272" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="294">第 5 层 · 应用与数据</text>
+            <text class="dg-s" x="34" y="311">参数化查询 · 输出编码 · 密钥不落盘 · 敏感字段加密 · 审计日志</text>
+
+            <path class="dg-line" d="M340,318 V332" marker-end="url(#a11)"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="334" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="356">第 6 层 · 密钥与资产隔离</text>
+            <text class="dg-s" x="34" y="373">冷热分离 · HSM / MPC · 提现多级审批 · 单笔与日累计限额</text>
+
+            <path class="dg-line" d="M340,380 V394" marker-end="url(#a11)"/>
+
+            <rect class="dg-node dg-node--down" x="16" y="396" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="418">第 7 层 · 检测与响应</text>
+            <text class="dg-s" x="34" y="435">实时告警 · 异常行为检测 · 自动熔断 · 应急响应预案 · 事后复盘</text>
+          </svg>
+          <p class="diagram__cap"><b>图 06-A</b> 七层纵深防御。<strong>前四层阻止攻击，后三层限制损失并发现异常</strong>。注意第 7 层的存在意味着整个体系承认「前面的防线可能全部失效」—— 这不是悲观，而是工程上唯一诚实的假设。</p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">06.3</span>接入层：处理掉 90% 的噪音</h2>
+
+        <h3 class="sub" id="s3-1">DDoS：两种完全不同的攻击</h3>
+
+        <p>
+          「抗 DDoS」这个词把两类差异极大的攻击混在了一起。
+          分开看才知道该用什么手段。
+        </p>
+
+        <div class="compare">
+          <div class="bad">
+            <h5>四层攻击 · 流量型</h5>
+            <ul>
+              <li>SYN Flood、UDP 反射、DNS 放大</li>
+              <li>特征是<strong>流量巨大</strong>，可达数百 Gbps</li>
+              <li>目的是耗尽带宽与连接表</li>
+              <li>应对：流量清洗中心、Anycast 分散、运营商联动</li>
+              <li>单靠自身机房无法抵御，必须依赖上游</li>
+            </ul>
+          </div>
+          <div class="bad">
+            <h5>七层攻击 · 应用型</h5>
+            <ul>
+              <li>CC 攻击、慢速连接、API 高频调用</li>
+              <li>特征是<strong>流量不大但请求复杂</strong>，每个请求看起来都合法</li>
+              <li>目的是耗尽应用的计算与数据库资源</li>
+              <li>应对：行为分析、人机验证、动态限流、缓存</li>
+              <li>无法靠「加大带宽」解决，必须靠识别</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">最容易被打穿的地方</span>
+          <p>
+            七层攻击中最难防的是<strong>「慢速攻击」</strong>：
+            攻击者建立大量连接，每个连接以极慢的速度发送数据，
+            让服务器长时间保持连接等待。每个连接消耗极少资源，
+            但成千上万个连接会耗尽服务器的连接池。
+          </p>
+          <p>
+            防御手段是<strong>设置全生命周期的超时</strong> ——
+            不仅要有读超时，还要有「请求头读取超时」「请求体接收超时」
+            「整体处理超时」。很多框架默认只设了读超时，于是慢速攻击长驱直入。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s3-2">限流：保护自己，而不是惩罚用户</h3>
+
+        <p>
+          限流的目的不是「限制用户」，而是<strong>在过载时保住核心功能</strong>。
+          一个没有限流的系统在流量洪峰下会整体崩溃，
+          而有限流的系统会优雅地拒绝一部分请求，保住其余部分。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">限流策略 · 分层设计</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c"># 分层限流：粒度从粗到细，越细的限流越贵</span>
+
+<span class="c"># 1. IP 级 —— 最粗，成本最低，防单点刷接口</span>
+limit_req_zone $binary_remote_addr zone=perip:10m rate=50r/s;
+
+<span class="c"># 2. 用户级 —— 按 API Key 限流，区分普通用户与做市商</span>
+<span class="c">#    做市商需要更高的配额，且不应与普通用户共享限额池</span>
+limit_req_zone $http_x_api_key zone=perkey:20m rate=100r/s;
+
+<span class="c"># 3. 接口级 —— 不同接口的价值不同，限额也应不同</span>
+<span class="c">#    下单接口：10 r/s（有实际成本，需要冻结资金）</span>
+<span class="c">#    查询接口：200 r/s（纯读，成本低）</span>
+<span class="c">#    提现接口：1 r/10s（极高风险）</span>
+
+<span class="c"># 4. 全局级 —— 最后一道保护，防止整体过载</span>
+<span class="c">#    当系统负载超过阈值时，主动拒绝非核心请求，保住撮合与结算</span>
+
+<span class="c"># 关键原则：限流必须是「快速失败」，不能排队等待</span>
+<span class="c"># 排队会让延迟飙升，最终演变成雪崩 —— 立即返回 429 反而更友好</span></pre>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">06.4</span>应用层：那些年复一年被利用的漏洞</h2>
+
+        <p>
+          OWASP Top 10 已经发布了很多年，但每年被利用的漏洞类型几乎没变。
+          原因是这些漏洞的根源在于「开发者图省事」，而不是技术难度高。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>漏洞</th><th>根源</th><th>正确做法</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>SQL 注入</td>
+                <td>字符串拼接 SQL</td>
+                <td>参数化查询（预编译）。ORM 也要注意 <code>Raw()</code> 之类的逃逸口</td>
+              </tr>
+              <tr>
+                <td>XSS</td>
+                <td>把用户输入直接当 HTML 渲染</td>
+                <td>输出编码 + CSP 头。富文本必须用白名单过滤，不能用黑名单</td>
+              </tr>
+              <tr>
+                <td>SSRF</td>
+                <td>服务端按用户提供的 URL 发起请求</td>
+                <td>白名单域名 + 禁止访问内网地址段 + 禁止跟随重定向到内网</td>
+              </tr>
+              <tr>
+                <td>越权访问</td>
+                <td>只校验「已登录」，不校验「是不是你的」</td>
+                <td>每个资源访问都校验归属关系。用不可枚举的 ID，但<strong>不能只靠 ID 不可猜</strong></td>
+              </tr>
+              <tr>
+                <td>CSRF</td>
+                <td>浏览器自动携带 Cookie</td>
+                <td>SameSite Cookie + CSRF Token。敏感操作额外要求二次验证</td>
+              </tr>
+              <tr>
+                <td>反序列化</td>
+                <td>反序列化不可信数据</td>
+                <td>不使用原生反序列化，改用 JSON 等纯数据结构格式</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">交易系统特别要注意的两条</span>
+          <p>
+            <strong>① 金额字段绝不接受客户端传入的「最终值」。</strong>
+            比如手续费，应该由服务端按规则计算，而不是接受客户端传来的手续费数字。
+            任何「客户端说多少就是多少」的字段，都是潜在的资金漏洞。
+          </p>
+          <p>
+            <strong>② 状态字段同样不可信。</strong>
+            订单状态、用户等级、风控标记，这些必须服务端决定。
+            客户端传来的状态只能作为「请求意图」，不能作为事实。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s4-1">认证：从密码到 Passkey</h3>
+
+        <p>
+          交易系统的认证要求高于普通应用，因为账号被盗直接等于资产损失。
+        </p>
+
+        <ol class="steps">
+          <li><b>密码</b><span>用 Argon2id 或 bcrypt 加盐哈希，绝不用 MD5/SHA1。密码强度用「长度」而非「复杂度」要求 —— 长度对抗暴力破解更有效。</span></li>
+          <li><b>多因素认证</b><span>TOTP 优于短信（SIM 卡可被克隆）。恢复码必须离线保存且一次性使用。绑定 MFA 后的首次提现应额外延迟。</span></li>
+          <li><b>Passkey / WebAuthn</b><span>用设备生物识别代替密码，私钥存在设备安全芯片中，无法被钓鱼。这是目前抗钓鱼能力最强的方案，应当作为首选推荐。</span></li>
+          <li><b>会话管理</b><span>会话 ID 足够随机（≥128 位）、绑定设备指纹、敏感操作要求重新验证、异地登录立即告警、提供「登出所有设备」。</span></li>
+        </ol>
+
+        <h2 class="sec" id="s5"><span class="sec__no">06.5</span>业务风控：识别「像人的机器」</h2>
+
+        <p>
+          应用层防护能拦住技术漏洞，但拦不住<strong>「用合法接口做非法的事」</strong>。
+          批量注册、薅羊毛、对敲刷量、盗号提现 —— 这些请求在技术上完全合法，
+          只能靠业务风控识别。
+        </p>
+
+        <h3 class="sub" id="s5-1">设备指纹：认出「同一个来源」</h3>
+
+        <p>
+          攻击者可以轻易换 IP，但很难完全改变设备特征。设备指纹通过
+          收集浏览器/设备的软硬件特征组合，生成一个稳定的标识：
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">被动</span><span class="v"><b>浏览器与硬件特征</b>。Canvas 渲染差异、WebGL 参数、字体列表、时区、屏幕参数、CPU 核心数。组合起来有极高的唯一性。</span></li>
+          <li><span class="k">主动</span><span class="v"><b>轻量探测脚本</b>。在用户无感知的情况下采集少量额外特征。注意隐私合规，且必须可被用户拒绝。</span></li>
+          <li><span class="k">行为</span><span class="v"><b>交互模式</b>。鼠标轨迹、点击精度、输入节奏、页面停留时间。机器人的行为模式与真人差异明显。</span></li>
+        </ul>
+
+        <div class="note note--info">
+          <span class="note__tag">组合信号才有意义</span>
+          <p>
+            单一信号几乎都可以被绕过，但组合起来就非常有效：
+            <strong>「同一设备指纹 + 十个不同账号 + 五分钟内」</strong>
+            这个组合几乎可以确定是自动化攻击。
+            风控系统的核心能力不是采集多少信号，
+            而是<em>把信号组合成有判别力的规则与模型</em>。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s5-2">风控的三档处置</h3>
+
+        <div class="grid-cards">
+          <article><span class="no">ALLOW</span><h4>放行</h4><p>评分低，正常执行。绝大多数请求走这条路，风控不能成为性能瓶颈。</p></article>
+          <article><span class="no">CHALLENGE</span><h4>挑战</h4><p>评分中等，要求额外验证：人机验证、短信验证、二次确认。让真人顺利通过，让机器成本升高。</p></article>
+          <article><span class="no">BLOCK</span><h4>拦截</h4><p>评分高，直接拒绝并记录。同时触发告警，供安全团队分析是否为新型攻击。</p></article>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">风控最重要的指标</span>
+          <p>
+            不是「拦截了多少攻击」，而是<strong>误杀率</strong>。
+            一个把 5% 正常用户挡在门外的风控系统，即使拦住了所有攻击，
+            也是在摧毁业务。因此风控必须：
+            ① 有快速申诉通道；
+            ② 对「挑战」优先于「拦截」；
+            ③ 每次规则变更都评估误杀率；
+            ④ 记录被拦截样本供持续优化。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">06.6</span>密钥与机密：最不该泄露的东西</h2>
+
+        <p>
+          系统里有很多「机密」：数据库密码、API 密钥、签名私钥、加密密钥。
+          它们一旦泄露，前面所有的防护都可能被绕过。
+        </p>
+
+        <h3 class="sub" id="s6-1">三个绝对不能犯的错误</h3>
+
+        <div class="compare">
+          <div class="bad">
+            <h5>禁止</h5>
+            <ul>
+              <li>把密钥硬编码在源码里（尤其前端与移动端）</li>
+              <li>把密钥提交到 Git 仓库（历史记录同样危险）</li>
+              <li>把密钥打进日志或错误堆栈</li>
+              <li>用同一把密钥加密所有数据</li>
+              <li>密钥长期不轮换</li>
+              <li>把生产密钥给开发环境用</li>
+            </ul>
+          </div>
+          <div class="good">
+            <h5>正确做法</h5>
+            <ul>
+              <li>用密钥管理服务（KMS / Vault）集中管理，按需下发、短期有效</li>
+              <li>提交前用扫描工具拦截（gitleaks / trufflehog）</li>
+              <li>日志系统配置敏感字段自动脱敏</li>
+              <li>按用途与数据域分离密钥，一个泄露不影响其他</li>
+              <li>定期轮换，且有自动化流程保证轮换不出故障</li>
+              <li>环境之间完全隔离，密钥不互通</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 class="sub" id="s6-2">加密的分层</h3>
+
+        <p>
+          「加密存储」不是一个动作，而是一套分层策略。
+          关键是搞清楚<strong>加密密钥本身存在哪里</strong> ——
+          如果加密密钥和数据放在同一个地方，加密就只是心理安慰。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 268" role="img" aria-label="密钥分层加密">
+            <rect class="dg-node dg-node--down" x="16" y="16" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="40">根密钥 · Root Key</text>
+            <text class="dg-s" x="34" y="58">存于 HSM 硬件模块，永不导出。所有其他密钥由它派生或加密保护</text>
+
+            <path class="dg-line" d="M340,72 V92"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="94" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="118">数据密钥 · Data Encryption Key</text>
+            <text class="dg-s" x="34" y="136">按用途与租户生成多把，由根密钥加密后存储。定期轮换，泄露影响范围有限</text>
+
+            <path class="dg-line" d="M340,150 V170"/>
+
+            <rect class="dg-node" x="16" y="172" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="196">业务数据 · Encrypted Payload</text>
+            <text class="dg-s" x="34" y="214">敏感字段（身份证号、银行卡号、私钥密文）用数据密钥加密后落库</text>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="238" width="648" height="24" rx="6"/>
+            <text class="dg-s" x="34" y="255">即使数据库被完整拖走，没有 HSM 中的根密钥，数据仍无法解密</text>
+          </svg>
+          <p class="diagram__cap"><b>图 06-B</b> 分层加密。<strong>安全性来自「解密所需的东西不在被拖走的数据库里」</strong>。这是加密是否有意义的唯一判据。</p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">06.7</span>内控：防住「有权限的自己人」</h2>
+
+        <p>
+          外部攻击者要突破很多层，而内部人员已经站在里面了。
+          所有资金事故里，内部人参与的比例远高于公众想象。
+          内控的目标不是「不信任员工」，而是<strong>让任何人单独行动都无法造成不可挽回的损失</strong>。
+        </p>
+
+        <h3 class="sub" id="s7-1">最小权限</h3>
+
+        <p>
+          权限应当按「完成工作所必需」来授予，而不是「方便」。
+          具体做法：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>默认拒绝</strong> —— 权限需要显式申请与审批，而不是默认拥有。</li>
+          <li><strong>按角色而非按人</strong> —— 角色定义清晰的职责边界，人员变动时只改角色归属。</li>
+          <li><strong>时限授权</strong> —— 生产环境的高危权限应「临时申请、用完即撤」，而不是永久持有。</li>
+          <li><strong>定期复查</strong> —— 每季度审查一次权限，撤销不再需要的。人升职、转岗后往往留着旧权限。</li>
+          <li><strong>生产数据脱敏</strong> —— 开发和测试环境不应有真实用户数据。</li>
+        </ul>
+
+        <h3 class="sub" id="s7-2">四眼原则</h3>
+
+        <p>
+          任何高危操作都必须<strong>至少两个人独立确认</strong>，且两人不能是同一人、
+          不能共用账号、最好不在同一团队。适用于：
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>操作</th><th>为什么需要双人</th></tr></thead>
+            <tbody>
+              <tr><td>大额提现审批</td><td>单人可批 = 单人可偷。双人审批让内部作案需要串通</td></tr>
+              <tr><td>冷钱包转账</td><td>动用的是绝大多数资产，必须多人多地把分片凑齐</td></tr>
+              <tr><td>生产数据库直连</td><td>直连意味着可以绕过所有应用层控制</td></tr>
+              <tr><td>修改用户余额</td><td>人工调账是最容易被滥用的权限</td></tr>
+              <tr><td>发布生产版本</td><td>可以借发布植入后门</td></tr>
+              <tr><td>修改风控规则</td><td>放宽规则可以为后续攻击铺路</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">审计日志必须防「审计者」</span>
+          <p>
+            如果写审计日志的人可以删审计日志，那审计就形同虚设。
+            因此审计日志必须：
+            <strong>① 写入独立系统</strong>，应用账号只有写权限；
+            <strong>② 采用哈希链</strong>，删除或修改会被发现；
+            <strong>③ 定期导出到外部存储</strong>，平台自己也无法回改；
+            <strong>④ 有独立的访问控制</strong>，看审计日志本身也是一项需要授权的操作。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s8"><span class="sec__no">06.8</span>供应链与数据安全：被忽视的两个战场</h2>
+
+        <h3 class="sub" id="s8-1">供应链：你信任的依赖可能在害你</h3>
+
+        <p>
+          现代软件大量依赖第三方库。一个被投毒的依赖包，
+          可以在构建时就拿到你的全部机密，或者在运行时植入后门。
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">锁定</span><span class="v"><b>锁定依赖版本</b>。使用 lockfile，且锁定文件必须提交到仓库。避免「自动升级到最新版」带来的意外。</span></li>
+          <li><span class="k">审计</span><span class="v"><b>依赖漏洞扫描</b>。接入 CI，发现高危漏洞即阻断构建。同时维护 SBOM（软件物料清单），知道自己在用什么。</span></li>
+          <li><span class="k">验证</span><span class="v"><b>校验完整性</b>。启用包管理器的签名与哈希校验。私有依赖要确认来源可信。</span></li>
+          <li><span class="k">隔离</span><span class="v"><b>构建环境隔离</b>。构建过程不应能访问生产机密。构建产物签名后再部署，部署端校验签名。</span></li>
+        </ul>
+
+        <h3 class="sub" id="s8-2">数据安全：分类、脱敏、留存</h3>
+
+        <p>
+          不是所有数据都同等重要，但很多系统对所有数据一视同仁，
+          结果是既浪费了加密成本，又没保护好真正敏感的部分。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>级别</th><th>示例</th><th>保护要求</th></tr></thead>
+            <tbody>
+              <tr><td>极高</td><td>私钥、种子、助记词</td><td>离线保管 / HSM，绝不出现在任何联网系统</td></tr>
+              <tr><td>高</td><td>身份证号、银行卡、密码哈希</td><td>加密存储，密钥与数据分离，访问需授权并留痕</td></tr>
+              <tr><td>中</td><td>手机号、邮箱、交易记录</td><td>加密或脱敏存储，日志中必须脱敏</td></tr>
+              <tr><td>低</td><td>公开行情、K 线数据</td><td>无特殊要求，可缓存与分发</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 class="sec" id="s9"><span class="sec__no">06.9</span>检测、响应与演练：假设防线会被突破</h2>
+
+        <p>
+          前面八节都在讲「怎么防住」。但真实世界里，
+          再强的防御也可能被突破。所以最后一个问题至关重要：
+          <strong>当防线真的被突破时，系统能在多久内发现、多久内止损？</strong>
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 336" role="img" aria-label="安全事件应急响应流程">
+            <defs>
+              <marker id="a12" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <rect class="dg-node dg-node--up" x="16" y="16" width="648" height="50" rx="6"/>
+            <text class="dg-t" x="34" y="38">① 检测 · Detect</text>
+            <text class="dg-s" x="34" y="56">异常告警 · 对账差异 · 用户投诉 · 威胁情报 · 蜜罐触发</text>
+
+            <path class="dg-line" d="M340,66 V84" marker-end="url(#a12)"/>
+
+            <rect class="dg-node dg-node--up" x="16" y="86" width="648" height="50" rx="6"/>
+            <text class="dg-t" x="34" y="108">② 分级 · Triage</text>
+            <text class="dg-s" x="34" y="126">P0 资金正在流失 / P1 资产面临风险 / P2 数据泄露 / P3 一般安全事件</text>
+
+            <path class="dg-line" d="M340,136 V154" marker-end="url(#a12)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="156" width="648" height="50" rx="6"/>
+            <text class="dg-t" x="34" y="178">③ 止损 · Contain（最优先，先于查原因）</text>
+            <text class="dg-s" x="34" y="196">冻结受影响币种提现 · 暂停相关账户 · 轮换疑似泄露的密钥 · 隔离受影响主机</text>
+
+            <path class="dg-line" d="M340,206 V224" marker-end="url(#a12)"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="226" width="648" height="50" rx="6"/>
+            <text class="dg-t" x="34" y="248">④ 取证与清除 · Investigate &amp; Eradicate</text>
+            <text class="dg-s" x="34" y="266">保留现场（不重启、不清理）· 定位入口 · 确认影响范围 · 修补漏洞 · 清理后门</text>
+
+            <path class="dg-line" d="M340,276 V294" marker-end="url(#a12)"/>
+
+            <rect class="dg-node dg-node--down" x="16" y="296" width="648" height="34" rx="6"/>
+            <text class="dg-s" x="34" y="318">⑤ 恢复与复盘 · 灰度恢复服务 · 对账确认资金完整 · 形成可执行的改进项并跟踪闭环</text>
+          </svg>
+          <p class="diagram__cap"><b>图 06-C</b> 应急响应五步。<strong>第 ③ 步「止损」必须排在第 ④ 步「查原因」之前</strong>。这是最反直觉、也最容易被搞错的一点 —— 现场人员往往急于搞清楚发生了什么，但每多等一分钟，损失就多一分。先关门，再查案。</p>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">关键指标</span>
+          <p>
+            <strong>MTTD（平均检测时间）</strong>和
+            <strong>MTTR（平均响应时间）</strong>是衡量安全能力最实在的两个数字。
+            很多团队把预算全花在「防」（买设备、上产品），
+            却在「检测」上投入不足 —— 结果是攻击者已经在系统里潜伏了几个月，
+            而团队毫无察觉。
+          </p>
+          <p>
+            一个健康的比例是：<em>防御、检测、响应三者的投入大致相当</em>。
+            只投防御的系统，等于买了一扇很厚的门，却装了透明的玻璃墙。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s9-1">演练：把预案变成肌肉记忆</h3>
+
+        <p>
+          没有演练过的预案，在真实事件发生时几乎一定失效 ——
+          因为没人记得步骤、找不到联系方式、不知道谁有权拍板。
+        </p>
+
+        <ol class="steps">
+          <li><b>桌面推演</b><span>定期组织，给定一个虚构场景（例如「发现热钱包私钥可能泄露」），让各角色口头走一遍流程。成本低，能快速暴露流程缺陷。</span></li>
+          <li><b>红蓝对抗</b><span>红队模拟真实攻击者（含社会工程、内部渗透），蓝队负责检测与响应。重点不是「谁赢」，而是<em>红队用的哪条路径是蓝队没监控到的</em>。</span></li>
+          <li><b>混沌工程</b><span>在生产环境受控地注入故障（杀进程、加延迟、断网络），验证系统的容错与告警是否按预期工作。这是检验「假设失陷」能力的最直接方式。</span></li>
+          <li><b>漏洞赏金</b><span>向外部安全研究者开放漏洞提交通道并给予奖励。全球有大量高水平研究者，他们的视角往往比内部团队更刁钻。关键是响应要快、沟通要专业、奖金要有诚意。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 06 章 · 检查清单</span>
+          <p>
+            ① 已按攻击者画像完成威胁建模，攻击面清单包含管理后台、CI/CD、第三方回调；<br>
+            ② 七层纵深防御均已部署，每层可独立拦截；<br>
+            ③ 四层与七层 DDoS 有不同应对策略，全链路超时已设置；<br>
+            ④ 限流分层设计，过载时快速失败而非排队；<br>
+            ⑤ 金额与状态字段不接受客户端传入的最终值；<br>
+            ⑥ 密钥存于 KMS/HSM，无硬编码、无提交、日志已脱敏；<br>
+            ⑦ 高危操作双人复核，审计日志独立且防篡改；<br>
+            ⑧ 依赖锁定版本，CI 含漏洞扫描与 SBOM；<br>
+            ⑨ 应急响应预案明确「先止损后查因」，且经过演练。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

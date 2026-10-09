@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 · 系统架构 — 交易系统工程</title>
+<meta name="description" content="接入层、网关、业务服务群、撮合集群、行情分发、数据层的分工与边界，以及一笔下单请求从点击到成交回报的完整旅程。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="02-architecture">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">02</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Architecture</span>
+          <span class="dot"></span>
+          <span class="eyebrow">8 节 · 约 26 分钟</span>
+        </div>
+        <h1>系统架构：一笔订单走过的完整旅程</h1>
+        <p class="chapter-head__lede">
+          架构图谁都会画，难的是说清楚「为什么这条线必须连到那里」。
+          本章沿着一次真实的下单请求，从用户点击按钮开始，一直走到成交回报回到屏幕上，
+          在每一个环节停下来问：这一步能不能省？为什么不能？
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>每个组件为什么存在，去掉它会怎样</dd></div>
+          <div><dt>关键产出</dt><dd>全局架构图 · 下单时序图 · 各层职责边界</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch02-architecture.webp" width="1200" height="675"
+               alt="汇聚到中心节点的光纤与光脉冲" decoding="async">
+        </div>
+        <figcaption><b>FIG 02</b> 所有请求最终都要汇聚到一个确定的点上 —— 撮合内核的定序器。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">02.1</span>全局视图：七层与三条数据流</h2>
+
+        <p>
+          先给全貌。一个交易系统可以拆成七个功能域，
+          它们之间流动着三类截然不同的数据：<strong>命令流</strong>（用户的意图）、
+          <strong>事件流</strong>（系统产生的事实）、<strong>查询流</strong>（读请求）。
+          把这三条流分开，是架构清晰的第一步。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 470" role="img" aria-label="交易系统全局架构">
+            <defs>
+              <marker id="a2" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <!-- 客户端 -->
+            <rect class="dg-node" x="16" y="14" width="200" height="46" rx="6"/>
+            <text class="dg-t" x="32" y="36">客户端</text>
+            <text class="dg-s" x="32" y="52">Web / App / API</text>
+
+            <rect class="dg-node" x="464" y="14" width="200" height="46" rx="6"/>
+            <text class="dg-t" x="480" y="36">第三方 / 做市商</text>
+            <text class="dg-s" x="480" y="52">FIX / REST / WebSocket</text>
+
+            <!-- 边缘 -->
+            <rect class="dg-node dg-node--cyan" x="16" y="86" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="32" y="108">边缘层 · CDN · DDoS 清洗 · WAF · 四层/七层负载均衡</text>
+            <text class="dg-s" x="32" y="124">TLS 卸载 · 连接复用 · 地域就近接入 · 限速</text>
+
+            <path class="dg-line" d="M116,60 V86" marker-end="url(#a2)"/>
+            <path class="dg-line" d="M564,60 V86" marker-end="url(#a2)"/>
+
+            <!-- 网关 -->
+            <rect class="dg-node dg-node--cyan" x="16" y="158" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="32" y="180">API 网关 · 鉴权 · 签名校验 · 幂等去重 · 限流 · 路由</text>
+            <text class="dg-s" x="32" y="196">这是唯一允许「拒绝请求」的地方 —— 越早拒绝，成本越低</text>
+
+            <path class="dg-line" d="M340,132 V158" marker-end="url(#a2)"/>
+
+            <!-- 业务服务 -->
+            <rect class="dg-node" x="16" y="230" width="152" height="60" rx="6"/>
+            <text class="dg-t" x="30" y="254">用户服务</text>
+            <text class="dg-s" x="30" y="272">KYC / 权限</text>
+
+            <rect class="dg-node" x="180" y="230" width="152" height="60" rx="6"/>
+            <text class="dg-t" x="194" y="254">订单服务</text>
+            <text class="dg-s" x="194" y="272">校验 / 冻结</text>
+
+            <rect class="dg-node" x="344" y="230" width="152" height="60" rx="6"/>
+            <text class="dg-t" x="358" y="254">资产服务</text>
+            <text class="dg-s" x="358" y="272">账本 / 余额</text>
+
+            <rect class="dg-node" x="508" y="230" width="156" height="60" rx="6"/>
+            <text class="dg-t" x="522" y="254">风控服务</text>
+            <text class="dg-s" x="522" y="272">规则 / 评分</text>
+
+            <path class="dg-line" d="M340,204 V230" marker-end="url(#a2)"/>
+
+            <!-- 消息总线 -->
+            <rect class="dg-node dg-node--gold" x="16" y="314" width="648" height="42" rx="6"/>
+            <text class="dg-t" x="32" y="340">事件总线 · 定序后的事件流（Order Accepted / Trade / Balance Changed）</text>
+
+            <path class="dg-line dg-line--gold" d="M340,290 V314" marker-end="url(#a2)"/>
+
+            <!-- 撮合内核 -->
+            <rect class="dg-node dg-node--gold" x="16" y="380" width="312" height="74" rx="6"/>
+            <text class="dg-t" x="32" y="404">撮合内核 · Matching Engine</text>
+            <text class="dg-s" x="32" y="422">全内存 · 单线程 · 确定性 · 按交易对分片</text>
+            <text class="dg-s" x="32" y="440">订单簿 · 撮合算法 · 成交产出</text>
+
+            <!-- 行情 -->
+            <rect class="dg-node" x="352" y="380" width="312" height="74" rx="6"/>
+            <text class="dg-t" x="368" y="404">行情分发 · Market Data</text>
+            <text class="dg-s" x="368" y="422">盘口增量 · 成交明细 · K 线聚合</text>
+            <text class="dg-s" x="368" y="440">推送 + 快照，支持断线重连补齐</text>
+
+            <path class="dg-line dg-line--gold" d="M172,356 V380" marker-end="url(#a2)"/>
+            <path class="dg-line" d="M508,356 V380" marker-end="url(#a2)"/>
+
+            <!-- 回流 -->
+            <path class="dg-line dg-line--cyan dg-line--dash" d="M328,417 H352" marker-end="url(#a2)"/>
+            <path class="dg-line dg-line--dash" d="M664,417 H672 V36 H664" marker-end="url(#a2)" opacity=".45"/>
+            <text class="dg-label" x="676" y="220" transform="rotate(-90 676 220)" text-anchor="middle" fill="rgba(78,159,212,.8)">成交回报 → 客户端</text>
+          </svg>
+          <p class="diagram__cap"><b>图 02-A</b> 全局架构。注意两点：其一，<strong>业务服务不直接写撮合内核</strong>，而是通过事件总线把命令变成有序事件；其二，<strong>行情是独立的一条旁路</strong>，它从撮合结果派生，但绝不反向影响撮合。</p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">02.2</span>边缘层：把 90% 的恶意流量挡在门外</h2>
+
+        <p>
+          边缘层的价值可以用一句话概括：<strong>在离用户最近、离核心最远的地方处理掉大部分请求</strong>。
+          一次 DDoS 攻击如果有 90% 的流量在边缘就被丢弃，
+          核心系统甚至不会感知到攻击发生过。
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">CDN</span><span class="v"><b>静态资源与行情快照</b>。K 线历史、交易对列表这类读多写少的数据可以缓存在边缘，减少回源压力。</span></li>
+          <li><span class="k">DDoS</span><span class="v"><b>流量清洗</b>。区分四层攻击（SYN Flood、UDP 反射）与七层攻击（CC 攻击）。前者靠流量特征与速率限制，后者需要行为分析 —— 因为它的每个请求看起来都是合法的。</span></li>
+          <li><span class="k">WAF</span><span class="v"><b>应用层攻击拦截</b>。SQL 注入、XSS、路径穿越、恶意爬虫。规则库要持续更新，且必须能识别针对 API 的自动化攻击。</span></li>
+          <li><span class="k">LB</span><span class="v"><b>负载均衡</b>。交易系统的负载均衡有个特殊要求：<em>长连接不能随意漂移</em>。WebSocket 行情连接一旦建立，应尽量保持在同一台后端，否则每次重连都要重新同步快照。</span></li>
+        </ul>
+
+        <div class="note note--gold">
+          <span class="note__tag">设计原则</span>
+          <p>
+            边缘层做的每一个决策都应该是<strong>廉价且快速</strong>的。
+            如果边缘层需要查数据库才能判断是否放行，那它就成了新的瓶颈，
+            而且攻击者只要压垮边缘层就能达到目的。正确做法是让边缘层只依赖
+            内存中的规则、IP 信誉库和速率计数器。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">02.3</span>API 网关：唯一允许「拒绝」的地方</h2>
+
+        <p>
+          网关是命令流的第一道业务关卡。它要在最短时间内回答四个问题：
+          <em>你是谁</em>、<em>这个请求是不是重复的</em>、<em>你还有没有额度</em>、
+          <em>该路由到哪</em>。四个问题全部答完才放行。
+        </p>
+
+        <h3 class="sub" id="s3-1">鉴权与签名：为什么不用简单的 Token</h3>
+
+        <p>
+          普通网站用 Session 或 JWT 就够了。但交易系统的 API 有一个额外要求：
+          <strong>请求不能被篡改，也不能被重放</strong>。
+          因为一个被重放的「提现 1 BTC」请求，等同于直接的资金损失。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">签名方案 · HMAC</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 客户端构造签名：把「密钥 + 时间戳 + 随机数 + 请求体」一起哈希</span>
+<span class="k">timestamp</span> = 1759999999000        <span class="c">// 毫秒，服务端允许 ±5 秒偏移</span>
+<span class="k">nonce</span>     = <span class="s">"a7f3c9e1"</span>           <span class="c">// 一次性随机串，服务端在时间窗内去重</span>
+<span class="k">body</span>      = <span class="s">'{"symbol":"BTCUSDT","side":"BUY","type":"LIMIT","price":"43210.55","qty":"0.5"}'</span>
+<span class="k">payload</span>   = timestamp + nonce + body
+<span class="k">signature</span> = HMAC_SHA256(api_secret, payload)   <span class="c">// 十六进制输出</span>
+
+<span class="c">// 服务端校验顺序（任何一步失败即拒绝，且记录风控日志）</span>
+<span class="c">// 1. 时间戳是否在 ±5s 窗口内          → 防重放（过期请求）</span>
+<span class="c">// 2. nonce 是否已被使用（Redis SETNX） → 防重放（窗口内重复）</span>
+<span class="c">// 3. 重算签名是否一致（恒定时间比较）   → 防篡改</span>
+<span class="c">// 4. 请求体哈希是否与签名时一致         → 防中间人改包</span>
+<span class="c">// 5. 权限范围是否覆盖该接口             → 防越权</span></pre>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">细节致命</span>
+          <p>
+            签名比较<strong>必须用恒定时间比较函数</strong>（如 <code>hmac.Equal</code>），
+            不能用 <code>==</code>。字符串比较会在第一个不同字符处提前返回，
+            攻击者可以通过测量响应时间逐字节猜出正确签名。
+            这类时序攻击在普通业务里可以忽略，在资金接口上是真实的漏洞。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">02.4</span>业务服务群：把校验做在正确的位置</h2>
+
+        <p>
+          一笔下单请求要经过一连串校验。问题不是「要不要校验」，
+          而是<strong>每一层校验什么、在哪一层校验</strong>。校验放错位置，
+          要么性能崩掉，要么留下漏洞。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>层</th><th>校验内容</th><th>代价</th><th>失败后果</th></tr></thead>
+            <tbody>
+              <tr><td>网关</td><td>身份、签名、nonce、接口级限流</td><td>极低（纯内存）</td><td>未授权访问</td></tr>
+              <tr><td>风控服务</td><td>设备指纹、行为评分、频率异常、黑名单</td><td>低（内存 + 缓存）</td><td>被自动化攻击薅光</td></tr>
+              <tr><td>订单服务</td><td>交易对状态、精度、最小下单量、价格笼子</td><td>低</td><td>脏数据进入撮合</td></tr>
+              <tr><td>资产服务</td><td>可用余额是否充足、冻结是否成功</td><td>中（需事务）</td><td>透支、负余额</td></tr>
+              <tr><td>撮合内核</td><td>仅校验最基础的结构完整性</td><td>必须极低</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          注意最后一行。撮合内核<strong>不做业务校验</strong> ——
+          因为它是性能最敏感的地方，而且它应该只处理「已经确定合法」的输入。
+          让内核去查余额、查黑名单，等于把数据库访问塞进了微秒级的循环里。
+        </p>
+
+        <h3 class="sub" id="s4-1">「价格笼子」：一个容易被忽略的保护</h3>
+
+        <p>
+          价格笼子限制订单价格与市场价的偏离幅度（例如不得超过 ±10%）。
+          它的目的不是防止用户亏钱，而是防止<strong>因为用户输错小数点造成市场剧烈波动</strong>。
+          有人把 43210 打成 432100 挂出去，如果没有笼子，
+          做市商的自动策略会立刻吃掉这个订单，然后引发一连串连锁反应。
+        </p>
+
+        <h2 class="sec" id="s5"><span class="sec__no">02.5</span>撮合集群：一个不能水平扩展的组件</h2>
+
+        <p>
+          这是整个架构里最特殊的一层。绝大多数服务可以通过「加机器」来扩容，
+          但撮合内核<strong>不能</strong> —— 至少不能简单地加。
+        </p>
+
+        <p>原因是撮合必须满足两条硬性约束：</p>
+
+        <ol class="steps">
+          <li><b>确定性</b><span>相同的输入序列，必须产生完全相同的输出。如果两台机器并行处理同一个交易对的订单，谁先谁后是不确定的，结果就不可复现 —— 而不可复现意味着无法审计、无法重放、无法灾备。</span></li>
+          <li><b>全局有序</b><span>「价格优先、时间优先」中的「时间」，指的是<em>系统接收订单的先后顺序</em>。这个顺序必须由一个单点统一裁定，不能由多台机器各自判断。</span></li>
+        </ol>
+
+        <p>
+          所以标准做法是：<strong>按交易对分片，每个分片内单线程串行</strong>。
+          BTC/USDT 是一个独立的分片，ETH/USDT 是另一个。它们之间互不影响，
+          可以分布在不同机器上，于是整体吞吐量仍然可以横向扩展 ——
+          只是扩展的维度是「交易对数量」，不是「单交易对的并发度」。
+        </p>
+
+        <div class="keyline">
+          <span class="keyline__tag">核心权衡</span>
+          <p>
+            单交易对的撮合能力上限，等于单线程的处理速度。这就是为什么撮合引擎
+            要用 C++/Rust 写、要全内存、要避免任何系统调用 ——
+            <strong>它的性能天花板就是整个系统的性能天花板</strong>。
+            第 08 章会具体讲怎么把单线程压到极致。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">02.6</span>行情分发：把撮合结果变成你屏幕上的数字</h2>
+
+        <p>
+          行情是一条<strong>单向的、只读的旁路</strong>。它从撮合结果派生，
+          但不允许反向影响撮合。这个方向性约束非常重要 ——
+          它意味着即使行情系统完全崩溃，交易本身仍然可以正常进行。
+        </p>
+
+        <h3 class="sub" id="s6-1">为什么用「增量 + 快照」而不是全量推送</h3>
+
+        <p>
+          BTC/USDT 的盘口每秒可能变化上千次。如果每次都推送完整盘口（比如 50 档），
+          带宽会瞬间爆炸。标准做法是：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>首次连接</strong>推送一份完整快照，附带一个序列号 <code>seq=1000</code>。</li>
+          <li><strong>之后</strong>只推送增量：<code>seq=1001 更新第 3 档为 0.5 BTC</code>。</li>
+          <li><strong>客户端</strong>按序列号顺序应用增量。如果发现序列号跳号（比如收到 1005 但上次是 1001），说明丢了包，客户端主动断开并重新拉取快照。</li>
+        </ul>
+
+        <div class="note note--info">
+          <span class="note__tag">工程细节</span>
+          <p>
+            序列号必须由<strong>撮合内核统一分配</strong>，不能由行情服务自己生成。
+            否则行情服务重启后序列号会重置，所有客户端都会陷入「不断重连拉快照」的死循环。
+            这是实践中非常常见的一个故障模式。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">02.7</span>数据层：不同数据用不同的库</h2>
+
+        <p>
+          交易系统的数据可以按「访问模式」分成四类，
+          用同一种存储去装它们，必然有一类会很难受。
+        </p>
+
+        <div class="grid-cards">
+          <article><span class="no">STORE 01</span><h4>关系库</h4><p>订单、账本条目、用户、提现记录。要求强事务与唯一约束。通常按用户 ID 分库分表，账本表单独部署。</p></article>
+          <article><span class="no">STORE 02</span><h4>内存库</h4><p>盘口缓存、会话、限流计数器、幂等去重表。要求亚毫秒读写，允许在故障时从持久层重建。</p></article>
+          <article><span class="no">STORE 03</span><h4>消息队列</h4><p>事件流、异步任务、跨服务通知。要求分区有序与至少一次投递，消费者必须幂等。</p></article>
+          <article><span class="no">STORE 04</span><h4>列式存储</h4><p>成交历史、K 线、风控日志、审计流水。要求高压缩比与聚合查询性能，写多读少、几乎不更新。</p></article>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">一条纪律</span>
+          <p>
+            账本数据<strong>只追加，不修改</strong>。任何「修正」都是追加一条冲正条目，
+            而不是 UPDATE 原记录。这条纪律让账本天然具备可审计性 ——
+            你永远能看到「当时记了什么」以及「后来怎么改的」。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s8"><span class="sec__no">02.8</span>一次下单请求的完整旅程</h2>
+
+        <p>
+          现在把上面所有组件串起来，跟着一笔限价买单走完全程。
+          注意每一步的耗时量级 —— 它们决定了系统整体延迟的构成。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 596" role="img" aria-label="下单请求的完整时序">
+            <defs>
+              <marker id="a3" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 z" fill="rgba(214,166,76,.75)"/>
+              </marker>
+            </defs>
+
+            <!-- 泳道标题 -->
+            <text class="dg-label" x="70" y="16" text-anchor="middle">客户端</text>
+            <text class="dg-label" x="196" y="16" text-anchor="middle">网关</text>
+            <text class="dg-label" x="322" y="16" text-anchor="middle">风控/订单</text>
+            <text class="dg-label" x="448" y="16" text-anchor="middle">资产</text>
+            <text class="dg-label" x="574" y="16" text-anchor="middle">撮合内核</text>
+
+            <!-- 泳道竖线 -->
+            <path class="dg-line" d="M70,26 V580" opacity=".5"/>
+            <path class="dg-line" d="M196,26 V580" opacity=".5"/>
+            <path class="dg-line" d="M322,26 V580" opacity=".5"/>
+            <path class="dg-line" d="M448,26 V580" opacity=".5"/>
+            <path class="dg-line" d="M574,26 V580" opacity=".5"/>
+
+            <!-- 步骤 -->
+            <path class="dg-line dg-line--gold" d="M70,54 H196" marker-end="url(#a3)"/>
+            <text class="dg-label" x="76" y="48">1 · POST /order（含签名）</text>
+
+            <path class="dg-line dg-line--gold" d="M196,92 H322" marker-end="url(#a3)"/>
+            <text class="dg-label" x="202" y="86">2 · 验签 + 幂等 + 限流</text>
+
+            <path class="dg-line dg-line--gold" d="M322,130 H448" marker-end="url(#a3)"/>
+            <text class="dg-label" x="328" y="124">3 · 校验精度/价格笼子/风控</text>
+
+            <path class="dg-line dg-line--gold dg-line--dash" d="M448,168 H322" marker-end="url(#a3)"/>
+            <text class="dg-label" x="330" y="162" text-anchor="end">4 · 冻结资金（事务）</text>
+
+            <path class="dg-line dg-line--gold" d="M322,206 H574" marker-end="url(#a3)"/>
+            <text class="dg-label" x="380" y="200">5 · 提交定序（进入有序队列）</text>
+
+            <rect class="dg-node dg-node--gold" x="500" y="222" width="150" height="42" rx="5"/>
+            <text class="dg-s" x="575" y="240" text-anchor="middle">定序器分配 seq</text>
+            <text class="dg-s" x="575" y="255" text-anchor="middle">订单进入订单簿</text>
+
+            <path class="dg-line dg-line--cyan" d="M574,278 H70" marker-end="url(#a3)" opacity=".7"/>
+            <text class="dg-label" x="300" y="272">6 · 受理回报（NEW / REJECTED）→ 客户端</text>
+
+            <rect class="dg-node dg-node--gold" x="500" y="300" width="150" height="56" rx="5"/>
+            <text class="dg-s" x="575" y="320" text-anchor="middle">撮合循环</text>
+            <text class="dg-s" x="575" y="335" text-anchor="middle">价格优先 · 时间优先</text>
+            <text class="dg-s" x="575" y="350" text-anchor="middle">产出 Trade 事件</text>
+
+            <path class="dg-line dg-line--cyan" d="M574,374 H448" marker-end="url(#a3)" opacity=".7"/>
+            <text class="dg-label" x="512" y="368" text-anchor="middle">7 · 成交事件</text>
+
+            <rect class="dg-node dg-node--cyan" x="374" y="390" width="150" height="42" rx="5"/>
+            <text class="dg-s" x="449" y="408" text-anchor="middle">结算：解冻 + 划转</text>
+            <text class="dg-s" x="449" y="423" text-anchor="middle">生成账本条目</text>
+
+            <path class="dg-line dg-line--cyan" d="M448,452 H70" marker-end="url(#a3)" opacity=".7"/>
+            <text class="dg-label" x="240" y="446">8 · 成交回报 → 客户端</text>
+
+            <path class="dg-line dg-line--cyan" d="M574,486 H70" marker-end="url(#a3)" opacity=".7"/>
+            <text class="dg-label" x="300" y="480">9 · 行情推送（盘口增量 + 最新成交）</text>
+
+            <path class="dg-line dg-line--dash" d="M70,520 H574" opacity=".35"/>
+            <text class="dg-label" x="322" y="514" text-anchor="middle">10 · 异步：写订单流水 · 更新成交历史 · 风控快照 · 审计日志</text>
+
+            <!-- 耗时标注 -->
+            <rect class="dg-node" x="16" y="540" width="648" height="42" rx="6"/>
+            <text class="dg-s" x="34" y="558">典型耗时分配：1–2 网络 0.5ms · 2 网关 0.2ms · 3–4 校验与冻结 1–3ms · 5 定序 0.1ms</text>
+            <text class="dg-s" x="34" y="574">6 撮合 0.05–1ms · 7–8 结算与回报 0.5–2ms · 9 行情 异步 · 10 落库 异步（不阻塞主链路）</text>
+          </svg>
+          <p class="diagram__cap"><b>图 02-B</b> 下单时序。关键设计是<strong>第 5 步的「定序」</strong>：所有并发的请求在这里被压成一个确定性的序列，此后的一切都是串行且可复现的。第 10 步全部异步，绝不阻塞主链路 —— 这是延迟能压到 10ms 以内的原因。</p>
+        </div>
+
+        <h3 class="sub" id="s8-1">为什么「先冻结再撮合」不能反</h3>
+
+        <p>
+          顺序不能颠倒，原因很直接：<strong>如果先撮合再冻结，可能出现「成交了但钱不够」</strong>。
+          用户在同一瞬间用同一笔钱下了两笔单，如果两笔都先进入撮合并成交，
+          结算时就会发现余额只够一笔。此时系统面临一个无法优雅解决的问题 ——
+          撤销哪一笔？两笔都已经成交并向市场公布，撤销任何一笔都是对市场秩序的破坏。
+        </p>
+
+        <p>
+          先冻结则把这个矛盾消灭在萌芽状态：第二笔订单在冻结阶段就会因为
+          「可用余额不足」而被拒绝，根本不会进入撮合。这就是
+          <em>「在最早的可能点拒绝请求」</em>这一原则的具体体现。
+        </p>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 02 章 · 检查清单</span>
+          <p>
+            ① 命令流、事件流、查询流三条链路在架构上分离；<br>
+            ② 边缘层只依赖内存规则，不查数据库；<br>
+            ③ 签名校验使用恒定时间比较，nonce 有时间窗去重；<br>
+            ④ 业务校验分层放置，撮合内核不做业务校验；<br>
+            ⑤ 撮合按交易对分片，片内单线程串行；<br>
+            ⑥ 行情序列号由撮合内核统一分配，支持断线补齐；<br>
+            ⑦ 下单链路严格「先冻结、后撮合」；<br>
+            ⑧ 主链路只做必要动作，日志与统计全部异步。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

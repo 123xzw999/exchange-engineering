@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>交易系统工程 · 从零到一构建一个交易系统</title>
+<meta name="description" content="十章工程笔记：从需求到上线，拆解撮合引擎、账本清结算、资金安全与纵深防御。以中心化数字资产交易所为标本，讲清楚交易链的底层逻辑与网络安全体系。">
+<meta name="theme-color" content="#08090B">
+<meta property="og:title" content="交易系统工程 · 从零到一构建一个交易系统">
+<meta property="og:description" content="撮合、账本、清结算、资金安全、纵深防御 —— 十章拆解一个交易系统的完整构造。">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3Cpath d='M9.4 14.6 H16.6' stroke='%23E8EBF0' stroke-width='1.2'/%3E%3C/svg%3E">
+</head>
+<body data-page="home">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<main>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="hero__grid">
+      <div>
+        <div class="hero__kicker rv">
+          <span class="bar"></span>
+          <span class="eyebrow eyebrow--gold">Software Engineering · Trading Systems</span>
+        </div>
+        <h1 class="rv" style="--d:60ms">
+          <span class="thin">从零到一</span>
+          构建一个<br>交易系统
+        </h1>
+        <p class="hero__lede rv" style="--d:120ms">
+          十章的工程笔记：从一个模糊的想法，走到一套能扛住百万级并发、
+          让每一分钱都对得上账、在有人拿着真金白银来打的时候不丢一枚资产的系统。
+          以中心化数字资产交易所为标本 —— 因为它是当代软件工程里，
+          把<strong>性能</strong>、<strong>资金</strong>、<strong>安全</strong>三件事同时压到极限的少数场景之一。
+        </p>
+        <div class="hero__cta rv" style="--d:180ms">
+          <a class="btn btn--primary" href="chapters/00-foundations.html">
+            从第 00 章开始
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 8h11M9 3.5 13.5 8 9 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a class="btn" href="chapters/05-fund-safety.html">先看资金安全</a>
+          <a class="btn" href="chapters/06-security.html">先看网络安全</a>
+        </div>
+      </div>
+
+      <aside class="hero__aside rv" style="--d:220ms">
+        <dl class="hero__stats">
+          <div><dt>章节</dt><dd>10</dd></div>
+          <div><dt>专题小节</dt><dd>77</dd></div>
+          <div><dt>结构图与流程图</dt><dd>30+</dd></div>
+          <div><dt>代码与配置示例</dt><dd>22</dd></div>
+          <div><dt>核心命题</dt><dd>不丢币</dd></div>
+        </dl>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ PLATE ============ -->
+  <section class="section-block">
+    <figure class="plate rv">
+      <img src="assets/images/hero-terminal.webp" width="1600" height="686"
+           alt="抽象表现的数据中心：层叠的机柜与流动的金色光丝" loading="eager" decoding="async">
+      <figcaption class="plate__cap">
+        <span>Order flow</span>
+        <p>订单从接入网关到撮合内核，再回到你屏幕上那一格跳动的价格，全程通常不超过 10 毫秒。</p>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ TOC ============ -->
+  <section class="section-block">
+    <div class="section-block__head">
+      <h2>十章，一条完整链路</h2>
+      <p>从工程方法论起步，穿过业务建模、架构、撮合、账本，落到资金安全与纵深防御，最后收在界面设计与上线运维。每一章都能独立读，但连起来是一条线。</p>
+    </div>
+
+    <nav class="toc-list" aria-label="章节目录">
+      <a href="chapters/00-foundations.html">
+        <span class="idx">00</span>
+        <span class="ttl">从零到一<small>Foundations</small></span>
+        <span class="desc">需求怎么从一句模糊的话变成可验证的问题陈述，架构怎么长出来，迭代怎么不失控。</span>
+        <span class="cnt">8 节</span>
+      </a>
+      <a href="chapters/01-domain.html">
+        <span class="idx">01</span>
+        <span class="ttl">业务全景<small>Domain</small></span>
+        <span class="desc">现货、杠杆、合约、理财、法币通道分别是什么，以及它们背后共用哪一套资金关系。</span>
+        <span class="cnt">7 节</span>
+      </a>
+      <a href="chapters/02-architecture.html">
+        <span class="idx">02</span>
+        <span class="ttl">系统架构<small>Architecture</small></span>
+        <span class="desc">接入层到数据层的分工，服务边界怎么切，以及一笔下单请求走过的完整旅程。</span>
+        <span class="cnt">8 节</span>
+      </a>
+      <a href="chapters/03-trading-core.html">
+        <span class="idx">03</span>
+        <span class="ttl">交易链核心<small>Trading Core</small></span>
+        <span class="desc">订单生命周期、订单簿数据结构、内存撮合、单线程定序，以及成交如何变成行情。</span>
+        <span class="cnt">9 节</span>
+      </a>
+      <a href="chapters/04-ledger.html">
+        <span class="idx">04</span>
+        <span class="ttl">账本与清结算<small>Ledger</small></span>
+        <span class="desc">复式记账、资金冻结与解冻、逐笔结算，以及「可用」和「可提」为什么必须分开。</span>
+        <span class="cnt">7 节</span>
+      </a>
+      <a href="chapters/05-fund-safety.html">
+        <span class="idx">05</span>
+        <span class="ttl">资金安全<small>Fund Safety</small></span>
+        <span class="desc">资金守恒定律、冷热钱包分离、对账三道防线、提现风控 —— 币为什么不会凭空消失。</span>
+        <span class="cnt">8 节</span>
+      </a>
+      <a href="chapters/06-security.html">
+        <span class="idx">06</span>
+        <span class="ttl">网络安全<small>Security</small></span>
+        <span class="desc">威胁建模、纵深防御、密钥管理、内控四眼原则、应急响应与攻防演练。</span>
+        <span class="cnt">9 节</span>
+      </a>
+      <a href="chapters/07-interface.html">
+        <span class="idx">07</span>
+        <span class="ttl">界面设计<small>Interface</small></span>
+        <span class="desc">交易终端的信息架构、排印尺度、色彩语义、数据密度，以及盘口与下单面板的设计。</span>
+        <span class="cnt">7 节</span>
+      </a>
+      <a href="chapters/08-engineering.html">
+        <span class="idx">08</span>
+        <span class="ttl">技术栈<small>Engineering</small></span>
+        <span class="desc">语言与存储选型、撮合为什么用内存、可观测性三件套、压测与调优方法。</span>
+        <span class="cnt">7 节</span>
+      </a>
+      <a href="chapters/09-launch.html">
+        <span class="idx">09</span>
+        <span class="ttl">上线与演进<small>Launch</small></span>
+        <span class="desc">发布策略、容量规划、SLO 与告警、事故管理，以及从单体到多活的演进路径。</span>
+        <span class="cnt">7 节</span>
+      </a>
+    </nav>
+  </section>
+
+  <!-- ============ FEATURE SPLIT ============ -->
+  <section class="section-block">
+    <div class="feature-split">
+      <div class="rv">
+        <span class="eyebrow">The Question</span>
+        <h3 style="margin-top:14px">这个站在回答什么问题</h3>
+        <p>
+          绝大多数交易系统的技术文章停留在「用了什么中间件」。但真正让一个系统活下来的，
+          是几件更朴素的事：<strong>一笔订单从生到死经过了谁</strong>、
+          <strong>钱在哪个时刻被冻结、在哪个时刻被划走</strong>、
+          <strong>当两个进程对同一笔余额有不同看法时，谁说了算</strong>。
+        </p>
+        <p>
+          这个站把这些问题按真实系统的顺序铺开。你会看到撮合引擎为什么必须单线程，
+          账本为什么必须复式记账，冷钱包为什么要离线签名，
+          以及「币不会凭空消失」这件事在工程上到底由哪些机制保证 ——
+          它不是一句承诺，而是一组可验证的不变量。
+        </p>
+      </div>
+      <div class="rv" style="--d:80ms">
+        <span class="eyebrow">How to read</span>
+        <h3 style="margin-top:14px">怎么读</h3>
+        <p>
+          想快速建立全局观，按 00 → 09 顺序读，大约两小时。
+          想直奔重点，<strong>第 03 章</strong>（交易链）和
+          <strong>第 05、06 章</strong>（资金安全与网络安全）是硬核部分。
+        </p>
+        <p>
+          每章末尾有可执行的检查清单，可以当架构评审时对着念。
+          文中所有架构图都是矢量绘制的，放大到任意尺寸都清晰，适合直接拿去做技术方案配图。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DISCLAIMER ============ -->
+  <section class="section-block">
+    <div class="disclaim rv">
+      <span class="disclaim__tag">阅读前须知 · Scope &amp; Compliance</span>
+      <p>
+        本站是<strong>软件工程与系统架构的教学材料</strong>，讨论的是撮合、账本、清结算、
+        密钥管理与纵深防御这类通用技术命题。所有内容以公开的技术文献、行业公开架构分享
+        与计算机科学原理为基础，不针对任何特定平台的内部实现。
+      </p>
+      <p>
+        需要明确的是：<strong>在中国境内，虚拟货币相关业务活动属于非法金融活动</strong>，
+        境外交易平台向境内提供服务同样被禁止。本站不提供、也不构成任何开设、
+        运营、推广此类平台的方法、工具或建议。技术知识本身是中性的 ——
+        同一套高并发撮合与复式记账的设计，同样用于证券、期货、支付清算等合法金融基础设施。
+        请读者自行确认所在司法辖区的法律要求。
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="foot__grid">
+    <div>
+      <span class="eyebrow">交易系统工程 · Exchange Engineering</span>
+      <p style="margin-top:16px">
+        十章工程笔记，讲一个交易系统从零到一的构造。
+        全部内容为静态页面，离线可用，无外部依赖。
+      </p>
+    </div>
+    <nav class="foot__meta" aria-label="页脚导航">
+      <a href="chapters/00-foundations.html">开始阅读</a>
+      <a href="chapters/05-fund-safety.html">资金安全</a>
+      <a href="chapters/06-security.html">网络安全</a>
+      <a href="chapters/09-launch.html">上线与演进</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="js/site.js"></script>
+</body>
+</html>

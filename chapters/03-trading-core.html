@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 · 交易链核心 — 交易系统工程</title>
+<meta name="description" content="订单生命周期、订单簿数据结构、价格优先时间优先的精确含义、内存撮合算法、单线程定序、成交回报与行情分发的一致性保证。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="03-trading-core">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">03</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Trading Core</span>
+          <span class="dot"></span>
+          <span class="eyebrow">9 节 · 约 34 分钟</span>
+        </div>
+        <h1>交易链核心：撮合是怎么发生的</h1>
+        <p class="chapter-head__lede">
+          这是整站最硬的一章。我们会把订单从进入系统到变成成交记录的每一步拆开，
+          看清楚订单簿用什么数据结构、撮合算法怎么写、为什么必须单线程，
+          以及「价格优先、时间优先」这八个字在代码里到底是什么。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>一笔订单如何被撮合，为什么结果必须可复现</dd></div>
+          <div><dt>关键产出</dt><dd>状态机 · 订单簿结构 · 撮合算法 · 定序方案</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch03-trading-core.webp" width="1200" height="675"
+               alt="层叠的玻璃平面与金色光条，抽象表现订单簿的价位阶梯" decoding="async">
+        </div>
+        <figcaption><b>FIG 03</b> 订单簿是一架阶梯：每一层是一个价位，光条的长度是挂单量。撮合就是在两级阶梯相遇时把它们削平。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">03.1</span>订单的完整生命周期</h2>
+
+        <p>
+          一笔订单从诞生到消亡，会经过若干个状态。这些状态不是装饰，
+          每一个都对应着<strong>资金的不同归属</strong>。理解这一点，
+          就理解了为什么状态机不能随意简化。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 372" role="img" aria-label="订单状态机">
+            <defs>
+              <marker id="a4" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <!-- PENDING_NEW -->
+            <rect class="dg-node" x="16" y="24" width="150" height="52" rx="6"/>
+            <text class="dg-t" x="91" y="46" text-anchor="middle">PENDING_NEW</text>
+            <text class="dg-s" x="91" y="64" text-anchor="middle">已收到，校验中</text>
+
+            <path class="dg-line dg-line--gold" d="M166,50 H236" marker-end="url(#a4)"/>
+            <text class="dg-label" x="201" y="44" text-anchor="middle">通过</text>
+
+            <path class="dg-line" d="M91,76 V124" marker-end="url(#a4)"/>
+            <text class="dg-label" x="99" y="104">校验失败</text>
+
+            <!-- REJECTED -->
+            <rect class="dg-node dg-node--up" x="16" y="126" width="150" height="46" rx="6"/>
+            <text class="dg-t" x="91" y="146" text-anchor="middle">REJECTED</text>
+            <text class="dg-s" x="91" y="163" text-anchor="middle">终态 · 无冻结</text>
+
+            <!-- NEW -->
+            <rect class="dg-node dg-node--gold" x="236" y="24" width="150" height="52" rx="6"/>
+            <text class="dg-t" x="311" y="46" text-anchor="middle">NEW</text>
+            <text class="dg-s" x="311" y="64" text-anchor="middle">资金已冻结，入簿</text>
+
+            <path class="dg-line dg-line--gold" d="M386,50 H456" marker-end="url(#a4)"/>
+            <text class="dg-label" x="421" y="44" text-anchor="middle">可立即成交</text>
+
+            <path class="dg-line dg-line--gold" d="M311,76 V124" marker-end="url(#a4)"/>
+            <text class="dg-label" x="319" y="104">部分成交</text>
+
+            <path class="dg-line" d="M311,150 V198" marker-end="url(#a4)"/>
+            <text class="dg-label" x="319" y="178">用户撤单</text>
+
+            <!-- PARTIALLY_FILLED -->
+            <rect class="dg-node dg-node--gold" x="236" y="126" width="150" height="46" rx="6"/>
+            <text class="dg-t" x="311" y="146" text-anchor="middle">PARTIALLY_FILLED</text>
+            <text class="dg-s" x="311" y="163" text-anchor="middle">部分解冻已结算</text>
+
+            <path class="dg-line dg-line--gold" d="M386,149 H456" marker-end="url(#a4)"/>
+            <text class="dg-label" x="421" y="143" text-anchor="middle">继续成交</text>
+
+            <!-- FILLED -->
+            <rect class="dg-node dg-node--down" x="456" y="24" width="150" height="52" rx="6"/>
+            <text class="dg-t" x="531" y="46" text-anchor="middle">FILLED</text>
+            <text class="dg-s" x="531" y="64" text-anchor="middle">终态 · 全额结算</text>
+
+            <!-- CANCELED -->
+            <rect class="dg-node" x="236" y="200" width="150" height="46" rx="6"/>
+            <text class="dg-t" x="311" y="220" text-anchor="middle">CANCELED</text>
+            <text class="dg-s" x="311" y="237" text-anchor="middle">终态 · 剩余解冻</text>
+
+            <path class="dg-line" d="M456,149 H531 V76" marker-end="url(#a4)"/>
+            <text class="dg-label" x="545" y="120">全部成交</text>
+
+            <!-- 撤单路径从 NEW 与 PARTIAL -->
+            <path class="dg-line" d="M386,149 H420 V223 H386" marker-end="url(#a4)"/>
+            <text class="dg-label" x="404" y="217" text-anchor="middle">撤单</text>
+
+            <!-- 资金说明 -->
+            <rect class="dg-node" x="16" y="272" width="648" height="84" rx="6"/>
+            <text class="dg-t" x="34" y="296">每个状态背后的资金含义</text>
+            <text class="dg-s" x="34" y="316">PENDING_NEW：尚未冻结，资金仍可用于其他订单 —— 因此这一状态必须极短</text>
+            <text class="dg-s" x="34" y="334">NEW / PARTIALLY_FILLED：已冻结「剩余未成交部分」对应的资金，冻结额随成交递减</text>
+            <text class="dg-s" x="34" y="352">FILLED / CANCELED / REJECTED：终态，冻结额必须归零 —— 终态仍持有冻结额是最严重的 bug</text>
+          </svg>
+          <p class="diagram__cap"><b>图 03-A</b> 订单状态机。<code>PENDING_NEW</code> 是一个容易被忽视但极其危险的状态：此时资金尚未冻结，如果它持续太久（比如因为下游阻塞），用户就能用同一笔钱下第二单。因此这个状态的停留时间应当被监控并设告警。</p>
+        </div>
+
+        <h3 class="sub" id="s1-1">冻结额随成交递减：一个必须精确的账</h3>
+
+        <p>
+          假设用户下买单：价格 43200，数量 1 BTC，冻结 43200 USDT。
+          成交 0.4 BTC 后，冻结额应该变成多少？
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">伪代码 · 冻结额维护</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 下单时冻结（买单冻结计价币，卖单冻结基础币）</span>
+frozen_amount = price * qty                    <span class="c">// 43200 * 1 = 43200</span>
+
+<span class="c">// 每次成交后，按「成交量对应的冻结额」解冻并划转</span>
+<span class="c">// 注意：必须用「累计成交额」相减，而不是「每笔成交额」累加</span>
+<span class="c">// —— 后者会因精度截断产生累积误差</span>
+released = round_down(price * cum_filled_qty, quote_precision)
+remaining_frozen = frozen_amount - released
+
+<span class="c">// 示例：成交 0.4 BTC（累计），价格 43200</span>
+<span class="c">// released = 43200 * 0.4 = 17280</span>
+<span class="c">// remaining_frozen = 43200 - 17280 = 25920</span>
+<span class="c">// 若第二笔再成交 0.6 BTC：</span>
+<span class="c">// released = 43200 * 1.0 = 43200 → remaining_frozen = 0  ✓ 恰好归零</span>
+
+<span class="c">// 若改用「每笔累加」：17280 + round_down(43200*0.6) = 17280 + 25920 = 43200 ✓</span>
+<span class="c">// 看似也对 —— 但当价格带小数、数量精度更高时，逐笔累加会出现 0.00000001 级偏差，</span>
+<span class="c">// 最终导致「订单已完全成交但冻结额还剩 1 个最小单位」的脏数据。</span>
+<span class="c">// 用累计值相减是幂等的、可重放的，逐笔累加不是。</span></pre>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">不变量</span>
+          <p>
+            <strong>订单进入终态时，其冻结额必须精确归零。</strong>
+            这个不变量应当被写成断言，在每一笔状态迁移后校验。
+            违反它意味着有资金被永久锁死 —— 用户看得见余额却用不了，
+            这类问题在客服侧表现为「我的钱不见了」，而实际上它只是被冻结着。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">03.2</span>订单簿：数据结构决定性能上限</h2>
+
+        <p>
+          订单簿要回答两个高频问题：<em>当前最优买价/卖价是多少</em>、
+          <em>某个价位的挂单队列里谁排在前面</em>。
+          数据结构的选型直接决定了这两个问题的答案要多快。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>结构</th><th>找最优价</th><th>插入/删除</th><th>是否实用</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>有序数组</td><td>O(1) 取首尾</td><td>O(n) 移动元素</td><td>勉强可用</td><td>价位数量有限（通常几百档）时，内存移动的实际开销可以接受</td></tr>
+              <tr><td>红黑树 / 跳表</td><td>O(log n)</td><td>O(log n)</td><td>通用方案</td><td>价位动态变化大时的稳妥选择，实现复杂度中等</td></tr>
+              <tr><td>价格档位数组</td><td>O(1) 索引</td><td>O(1)</td><td>最优</td><td>价格按最小变动单位离散化后用数组下标寻址，需要处理价格范围</td></tr>
+              <tr><td>哈希表 + 双向链表</td><td>—</td><td>O(1)</td><td>辅助结构</td><td>用于 O(1) 定位并撤销任意订单，通常与其他结构组合使用</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub" id="s2-1">一个可用的订单簿结构</h3>
+
+        <p>
+          实践中常见的组合是：<strong>价位用有序结构维护，同价位内用 FIFO 队列</strong>。
+          下面是一个精简但完整的实现，重点是数据结构的选择与不变式：
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go · 订单簿</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="k">type</span> OrderBook <span class="k">struct</span> {
+    Symbol    <span class="k">string</span>
+    Bids      *PriceLevels          <span class="c">// 买盘：价格从高到低</span>
+    Asks      *PriceLevels          <span class="c">// 卖盘：价格从低到高</span>
+    Index     <span class="k">map</span>[OrderID]*Order   <span class="c">// O(1) 定位订单，用于撤单</span>
+    Seq       <span class="k">uint64</span>              <span class="c">// 全局递增序列号</span>
+}
+
+<span class="c">// 一个价位：价格 + 该价位所有订单的 FIFO 队列</span>
+<span class="k">type</span> PriceLevel <span class="k">struct</span> {
+    Price     <span class="k">int64</span>       <span class="c">// 定点整数表示，避免浮点误差</span>
+    TotalQty  <span class="k">int64</span>       <span class="c">// 该价位总量（冗余字段，用于 O(1) 算深度）</span>
+    Orders    []*Order    <span class="c">// 严格按到达顺序排列 —— 时间优先的物理载体</span>
+}
+
+<span class="c">// 插入限价单</span>
+<span class="k">func</span> (b *OrderBook) Insert(o *Order) {
+    o.Seq = b.nextSeq()                    <span class="c">// 序列号在此刻确定，这就是「时间」</span>
+    side := b.sideOf(o)
+    lvl := side.GetOrCreate(o.Price)
+    lvl.Orders = <span class="k">append</span>(lvl.Orders, o)     <span class="c">// 追加到队尾 = 时间优先</span>
+    lvl.TotalQty += o.RemainingQty
+    b.Index[o.ID] = o
+}
+
+<span class="c">// 撤单：必须是 O(1)，因为行情剧烈时撤单量会暴涨</span>
+<span class="k">func</span> (b *OrderBook) Cancel(id OrderID) (*Order, <span class="k">bool</span>) {
+    o, ok := b.Index[id]
+    <span class="k">if</span> !ok { <span class="k">return</span> <span class="k">nil</span>, <span class="k">false</span> }
+    lvl := b.sideOf(o).Get(o.Price)
+    lvl.remove(o)                          <span class="c">// 从队列中摘除并更新 TotalQty</span>
+    <span class="k">delete</span>(b.Index, id)
+    <span class="k">if</span> lvl.Empty() { b.sideOf(o).Delete(o.Price) }
+    <span class="k">return</span> o, <span class="k">true</span>
+}</pre>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">为什么需要 Index</span>
+          <p>
+            没有 <code>Index</code>，撤单就要遍历整个订单簿找到那个订单 ——
+            在行情剧烈波动时，撤单请求会暴涨，遍历会直接拖垮撮合线程。
+            <strong>用一点内存换 O(1) 的撤单能力，是订单簿设计里最划算的交易。</strong>
+          </p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">03.3</span>「价格优先、时间优先」到底是什么</h2>
+
+        <p>
+          这八个字每个人都会背，但落到代码里有几个容易含糊的点。精确的定义是：
+        </p>
+
+        <ol class="steps">
+          <li><b>价格优先</b><span>买单出价高的先成交，卖单要价低的先成交。这一条决定「先看哪个价位」。</span></li>
+          <li><b>时间优先</b><span>同一价位内，先到达的先成交。这一条决定「同一价位里先看哪个订单」。</span></li>
+          <li><b>「时间」指的是系统接收时间</b><span>不是客户端发起时间，也不是服务器处理时间。它必须是<em>由定序器分配的单调整体序列号</em>。用本地时钟会产生不可复现的结果。</span></li>
+          <li><b>成交价取被动方价格</b><span>这一点常被误解。买单以 43300 吃卖盘，卖盘最优价是 43200，则成交价为 <strong>43200</strong>（挂单方价格），不是 43300。主动方获得了价格改善。</span></li>
+        </ol>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 320" role="img" aria-label="订单簿撮合示意">
+            <defs>
+              <marker id="a5" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(214,166,76,.7)"/>
+              </marker>
+            </defs>
+
+            <text class="dg-label" x="16" y="18">卖盘 ASK（价格从低到高）</text>
+            <text class="dg-label" x="400" y="18">买盘 BID（价格从高到低）</text>
+
+            <!-- Asks -->
+            <rect class="dg-node dg-node--up" x="16" y="30" width="330" height="34" rx="4"/>
+            <text class="dg-s" x="30" y="51">43204.20</text>
+            <text class="dg-s" x="336" y="51" text-anchor="end">2.140 BTC</text>
+
+            <rect class="dg-node dg-node--up" x="16" y="68" width="330" height="34" rx="4"/>
+            <text class="dg-s" x="30" y="89">43203.10</text>
+            <text class="dg-s" x="336" y="89" text-anchor="end">0.880 BTC</text>
+
+            <rect class="dg-node dg-node--up" x="16" y="106" width="330" height="34" rx="4" stroke="rgba(229,72,77,.75)"/>
+            <text class="dg-s" x="30" y="127" fill="#E8EBF0">43202.00</text>
+            <text class="dg-s" x="336" y="127" text-anchor="end" fill="#E8EBF0">1.500 BTC</text>
+            <text class="dg-label" x="180" y="127" text-anchor="middle" fill="rgba(229,72,77,.9)">← 最优卖价（卖一）</text>
+
+            <!-- 价差 -->
+            <path class="dg-line dg-line--gold dg-line--dash" d="M16,152 H346"/>
+            <text class="dg-label" x="180" y="148" text-anchor="middle" fill="rgba(214,166,76,.85)">价差 0.50</text>
+
+            <!-- Bids -->
+            <rect class="dg-node dg-node--down" x="400" y="106" width="264" height="34" rx="4" stroke="rgba(47,163,107,.75)"/>
+            <text class="dg-s" x="414" y="127" fill="#E8EBF0">43201.50</text>
+            <text class="dg-s" x="650" y="127" text-anchor="end" fill="#E8EBF0">0.900 BTC</text>
+            <text class="dg-label" x="532" y="127" text-anchor="middle" fill="rgba(47,163,107,.9)">最优买价（买一）→</text>
+
+            <rect class="dg-node dg-node--down" x="400" y="144" width="264" height="34" rx="4"/>
+            <text class="dg-s" x="414" y="165">43200.00</text>
+            <text class="dg-s" x="650" y="165" text-anchor="end">3.200 BTC</text>
+
+            <rect class="dg-node dg-node--down" x="400" y="182" width="264" height="34" rx="4"/>
+            <text class="dg-s" x="414" y="203">43198.50</text>
+            <text class="dg-s" x="650" y="203" text-anchor="end">1.050 BTC</text>
+
+            <!-- 新订单 -->
+            <rect class="dg-node dg-node--gold" x="16" y="238" width="648" height="66" rx="6"/>
+            <text class="dg-t" x="34" y="262">新到达：限价买单 1.000 BTC @ 43205.00</text>
+            <text class="dg-s" x="34" y="282">撮合过程：与卖一 43202.00 成交 1.000 BTC（成交价 = 挂单方价格 43202.00，主动方获得 3.00 的价格改善）</text>
+            <text class="dg-s" x="34" y="298">结果：卖一剩余 0.500 BTC，买单全部成交，状态 → FILLED</text>
+          </svg>
+          <p class="diagram__cap"><b>图 03-B</b> 一次撮合的完整过程。买单出价 43205 高于卖一 43202，立即成交；<strong>成交价取被动方（卖单）的价格 43202</strong>。这不是细节，而是决定了「谁获得价格改善」的规则，也是所有交易规则文档里必须写清的一条。</p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">03.4</span>撮合算法：主循环只有二十行</h2>
+
+        <p>
+          撮合的核心逻辑出奇地短。复杂的是围绕它的工程细节 ——
+          精度、幂等、事件产出、异常处理。但主循环本身可以写得很清楚：
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go · 撮合主循环</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// Match 撮合一笔新到达的订单，返回产生的所有成交</span>
+<span class="k">func</span> (b *OrderBook) Match(taker *Order) []Trade {
+    <span class="k">var</span> trades []Trade
+
+    <span class="k">for</span> taker.RemainingQty &gt; <span class="n">0</span> {
+        <span class="c">// 1. 取对手方最优价位；没有对手盘则挂单等待</span>
+        maker, ok := b.bestOpposite(taker.Side)
+        <span class="k">if</span> !ok { <span class="k">break</span> }
+
+        <span class="c">// 2. 价格是否可成交？不可成交则挂单等待</span>
+        <span class="c">//    买单：对手卖价 &lt;= 我的出价     卖单：对手买价 &gt;= 我的要价</span>
+        <span class="k">if</span> !b.crossable(taker, maker) { <span class="k">break</span> }
+
+        <span class="c">// 3. 取该价位队首订单（时间优先）</span>
+        head := maker.Orders[<span class="n">0</span>]
+
+        <span class="c">// 4. 成交量 = 双方剩余量的较小值</span>
+        qty := min(taker.RemainingQty, head.RemainingQty)
+
+        <span class="c">// 5. 成交价 = 被动方价格（挂单方价格）</span>
+        price := head.Price
+
+        <span class="c">// 6. 更新双方剩余量</span>
+        taker.RemainingQty -= qty
+        head.RemainingQty  -= qty
+        maker.TotalQty     -= qty
+
+        <span class="c">// 7. 产出成交事件（注意：这里不写数据库，只产出事件）</span>
+        trades = <span class="k">append</span>(trades, Trade{
+            Symbol:   b.Symbol,
+            Price:    price,
+            Qty:      qty,
+            TakerID:  taker.ID,
+            MakerID:  head.ID,
+            Seq:      b.nextSeq(),
+        })
+
+        <span class="c">// 8. 挂单方完全成交则出队</span>
+        <span class="k">if</span> head.RemainingQty == <span class="n">0</span> {
+            maker.removeHead()
+            <span class="k">delete</span>(b.Index, head.ID)
+            <span class="k">if</span> maker.Empty() { b.sideOf(head).Delete(head.Price) }
+        }
+    }
+
+    <span class="c">// 9. 主动方未完全成交 → 剩余部分挂入订单簿</span>
+    <span class="k">if</span> taker.RemainingQty &gt; <span class="n">0</span> {
+        b.Insert(taker)
+    }
+    <span class="k">return</span> trades
+}</pre>
+        </div>
+
+        <p>注意第 7 步的那句注释。这是撮合引擎设计里最重要的一条纪律：</p>
+
+        <div class="keyline">
+          <span class="keyline__tag">纪律</span>
+          <p>
+            <strong>撮合内核不写数据库，不读数据库，不做任何 IO。</strong>
+            它只做一件事：接收有序事件，产出结果事件。
+            持久化、通知、统计、对账，全部由下游消费者完成。
+            这条纪律让撮合内核保持在纯内存、纯计算的状态 ——
+            这也是它能做到微秒级延迟的根本原因。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5"><span class="sec__no">03.5</span>为什么撮合必须单线程</h2>
+
+        <p>
+          这是新手最常提出的质疑：「现在都是多核时代了，为什么不用多线程？」
+          答案不是「性能不够」，而是<strong>正确性要求</strong>。
+        </p>
+
+        <h3 class="sub" id="s5-1">并发撮合会导致不可复现</h3>
+
+        <p>
+          设想两个线程同时处理 BTC/USDT 的两个买单。它们的执行顺序取决于
+          操作系统的调度、锁的竞争、缓存一致性协议 —— 这些都是<em>非确定</em>的。
+          于是同样的输入，两次运行会得到不同的成交结果。
+        </p>
+
+        <p>后果是连锁的：</p>
+
+        <ul class="bullets">
+          <li><strong>无法审计</strong> —— 用户质疑「为什么我的订单没成交」，你无法复现当时的情况。</li>
+          <li><strong>无法灾备</strong> —— 主节点故障后，备节点重放事件流会得到不同的状态，两边账本对不上。</li>
+          <li><strong>无法回溯</strong> —— 出现资金差异时，无法通过重放定位是哪一笔开始错的。</li>
+        </ul>
+
+        <div class="compare">
+          <div class="bad">
+            <h5>多线程撮合</h5>
+            <ul>
+              <li>吞吐可能更高，但结果不可复现</li>
+              <li>需要复杂的锁协议，锁竞争本身成为瓶颈</li>
+              <li>无法通过重放验证状态一致性</li>
+              <li>灾备切换后两边状态可能不一致</li>
+              <li>故障排查变成玄学</li>
+            </ul>
+          </div>
+          <div class="good">
+            <h5>单线程 + 分片</h5>
+            <ul>
+              <li>结果完全确定，可重放、可审计、可灾备</li>
+              <li>无锁，无上下文切换，CPU 缓存友好</li>
+              <li>单分片性能可达数十万笔/秒</li>
+              <li>横向扩展靠增加交易对分片</li>
+              <li>故障排查可以精确到具体序列号</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 class="sub" id="s5-2">单线程为什么还能这么快</h3>
+
+        <p>
+          「单线程」听起来很慢，但现代 CPU 的单核性能远超直觉。
+          一个优化良好的撮合内核，处理一笔订单通常在<strong>几百纳秒到几微秒</strong>之间。
+          按 2 微秒算，单线程每秒可以处理 50 万笔订单 ——
+          这已经超过绝大多数交易对的实际峰值需求。
+        </p>
+
+        <p>能这么快，靠的是消除一切非必要开销：</p>
+
+        <ul class="list-lines">
+          <li><span class="k">零分配</span><span class="v"><b>对象池复用</b>。撮合循环里不产生垃圾，避免 GC 停顿。所有订单对象从预分配池中取出、归还。</span></li>
+          <li><span class="k">零拷贝</span><span class="v"><b>事件直接写入环形缓冲</b>。不与下游做内存拷贝，下游通过共享内存读取。</span></li>
+          <li><span class="k">零系统调用</span><span class="v"><b>不做 IO、不加锁、不记录日志</b>。这些动作全部挪到其他线程。</span></li>
+          <li><span class="k">CPU 亲和</span><span class="v"><b>绑定核心 + 关闭超线程</b>。避免撮合线程被调度到其他核心导致缓存失效。</span></li>
+        </ul>
+
+        <h2 class="sec" id="s6"><span class="sec__no">03.6</span>定序：把并发压成一个确定的序列</h2>
+
+        <p>
+          既然撮合必须串行，那并发的请求就得在进入撮合之前被<strong>排成一队</strong>。
+          完成这个动作的组件叫定序器（Sequencer）。它是整个系统里
+          <em>唯一的</em>顺序裁定者。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 316" role="img" aria-label="定序器工作原理">
+            <defs>
+              <marker id="a6" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <text class="dg-label" x="16" y="16">并发的多个网关实例同时提交订单（到达顺序不确定）</text>
+
+            <rect class="dg-node" x="16" y="26" width="128" height="34" rx="4"/>
+            <text class="dg-s" x="80" y="47" text-anchor="middle">网关 A · 订单 X</text>
+            <rect class="dg-node" x="156" y="26" width="128" height="34" rx="4"/>
+            <text class="dg-s" x="220" y="47" text-anchor="middle">网关 B · 订单 Y</text>
+            <rect class="dg-node" x="296" y="26" width="128" height="34" rx="4"/>
+            <text class="dg-s" x="360" y="47" text-anchor="middle">网关 C · 订单 Z</text>
+            <rect class="dg-node" x="436" y="26" width="128" height="34" rx="4"/>
+            <text class="dg-s" x="500" y="47" text-anchor="middle">网关 D · 订单 W</text>
+
+            <path class="dg-line dg-line--gold" d="M80,60 V92" marker-end="url(#a6)"/>
+            <path class="dg-line dg-line--gold" d="M220,60 V92" marker-end="url(#a6)"/>
+            <path class="dg-line dg-line--gold" d="M360,60 V92" marker-end="url(#a6)"/>
+            <path class="dg-line dg-line--gold" d="M500,60 V92" marker-end="url(#a6)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="94" width="648" height="48" rx="6"/>
+            <text class="dg-t" x="34" y="118">定序器 · Sequencer（单点 · 高可用）</text>
+            <text class="dg-s" x="34" y="135">对每个交易对维护一条严格有序的队列，为每个事件分配全局唯一且单调递增的序列号</text>
+
+            <path class="dg-line dg-line--gold" d="M340,142 V172" marker-end="url(#a6)"/>
+
+            <!-- 有序队列 -->
+            <text class="dg-label" x="16" y="168">定序后的确定性序列</text>
+            <rect class="dg-node" x="16" y="176" width="150" height="38" rx="4"/>
+            <text class="dg-s" x="91" y="199" text-anchor="middle">seq=1001 · X</text>
+            <rect class="dg-node" x="176" y="176" width="150" height="38" rx="4"/>
+            <text class="dg-s" x="251" y="199" text-anchor="middle">seq=1002 · Z</text>
+            <rect class="dg-node" x="336" y="176" width="150" height="38" rx="4"/>
+            <text class="dg-s" x="411" y="199" text-anchor="middle">seq=1003 · Y</text>
+            <rect class="dg-node" x="496" y="176" width="168" height="38" rx="4"/>
+            <text class="dg-s" x="580" y="199" text-anchor="middle">seq=1004 · W</text>
+
+            <path class="dg-line dg-line--gold" d="M340,214 V244" marker-end="url(#a6)"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="246" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="270">撮合内核单线程消费</text>
+            <text class="dg-s" x="34" y="288">相同序列 → 相同结果。重放 1001 到 1004 必然得到与首次执行完全一致的状态</text>
+          </svg>
+          <p class="diagram__cap"><b>图 03-C</b> 定序器的作用。注意 <strong>X、Y、Z、W 的最终顺序（X→Z→Y→W）与它们到达网关的物理顺序无关</strong> —— 重要的是定序器裁定了一个唯一顺序，并且所有下游都看到同一个顺序。这就是「确定性」的来源。</p>
+        </div>
+
+        <h3 class="sub" id="s6-1">定序器自身的高可用</h3>
+
+        <p>
+          定序器是单点，但它不能是单机。标准做法是
+          <strong>主备 + 多数派确认</strong>：主节点分配序列号后，
+          必须得到多数派副本的确认才向客户端返回「已受理」。
+          主节点故障时，备节点从最后一条已确认的序列号继续，不会丢也不会重复。
+        </p>
+
+        <div class="note note--info">
+          <span class="note__tag">与共识算法的关系</span>
+          <p>
+            这套机制与 Raft / Paxos 类共识算法解决的是同一个问题：
+            在不可靠的网络上达成一个可靠的顺序。区别在于交易系统的定序器
+            通常只负责「排序」这一件事，把状态机复制交给下游消费者，
+            从而获得更高的吞吐。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">03.7</span>从成交到结算：事件如何驱动一切</h2>
+
+        <p>
+          撮合产出的 <code>Trade</code> 事件只是开始。它要被若干个消费者分别处理，
+          每个消费者做一件独立的事。这种<strong>事件驱动</strong>的结构，
+          是交易系统能在保证一致性的同时保持低延迟的关键。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>消费者</th><th>消费什么</th><th>产出什么</th><th>失败影响</th></tr></thead>
+            <tbody>
+              <tr><td>结算器</td><td>Trade 事件</td><td>解冻、划转、账本条目</td><td>严重 —— 必须优先保证</td></tr>
+              <tr><td>行情服务</td><td>Trade + 订单簿变更</td><td>盘口增量、最新成交、K 线</td><td>中等 —— 可重放恢复</td></tr>
+              <tr><td>订单服务</td><td>Trade + 状态变更</td><td>更新订单状态、推送用户回报</td><td>中等 —— 可重放</td></tr>
+              <tr><td>风控服务</td><td>全量事件</td><td>风险指标、异常检测</td><td>低 —— 可延迟</td></tr>
+              <tr><td>数据仓库</td><td>全量事件</td><td>成交历史、统计分析</td><td>低 —— 可批量补</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub" id="s7-1">消费必须幂等</h3>
+
+        <p>
+          消息队列通常保证「至少一次」投递，意味着同一条事件可能被消费两次。
+          如果结算器不幂等，同一笔成交会被扣两次钱。
+          解决办法是<strong>用序列号做幂等键</strong>：
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go · 幂等消费</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 每条账本条目都携带产生它的 (seq, event_type)，构成唯一键</span>
+<span class="k">type</span> LedgerEntry <span class="k">struct</span> {
+    Seq       <span class="k">uint64</span>   <span class="c">// 来源事件序列号</span>
+    EventType <span class="k">string</span>   <span class="c">// TRADE / FEE / DUST / FUNDING ...</span>
+    EntryNo   <span class="k">int</span>      <span class="c">// 同一事件内的条目序号（一笔成交产生多条）</span>
+    AccountID <span class="k">string</span>
+    Asset     <span class="k">string</span>
+    Debit     <span class="k">int64</span>
+    Credit    <span class="k">int64</span>
+}
+
+<span class="c">// 数据库层用唯一约束兜底 —— 比应用层判断更可靠</span>
+<span class="c">// UNIQUE KEY uk_ledger (seq, event_type, entry_no)</span>
+
+<span class="k">func</span> (s *Settler) Apply(e LedgerEntry) <span class="k">error</span> {
+    <span class="c">// INSERT ... ON CONFLICT DO NOTHING</span>
+    <span class="c">// 重复消费时唯一约束直接拦下，不产生任何副作用</span>
+    n, err := s.db.InsertIgnore(e)
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="k">if</span> n == <span class="n">0</span> {
+        s.metrics.DuplicateConsumed.Inc()   <span class="c">// 记录但不报错 —— 这是正常情况</span>
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}</pre>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">为什么唯一约束比应用层判断可靠</span>
+          <p>
+            应用层用「先查再写」实现幂等，在并发下会有竞态窗口：
+            两个线程同时查询，都发现不存在，然后都写入。
+            数据库的唯一约束是<strong>原子</strong>的，它由存储引擎保证，
+            不依赖应用代码的正确性。把幂等性下沉到存储层，
+            是资金系统的一条通用经验。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s8"><span class="sec__no">03.8</span>行情分发：把撮合结果变成可消费的数据流</h2>
+
+        <p>
+          行情是交易系统的「广播电台」：一个生产者，数万个消费者，
+          且每个消费者都希望尽快拿到最新数据。这决定了它必须采用
+          与交易链路完全不同的技术方案。
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">盘口</span><span class="v"><b>增量推送 + 序列号</b>。只推变化的价位，客户端按序列号应用。丢包即重连拉快照。</span></li>
+          <li><span class="k">成交</span><span class="v"><b>逐笔推送</b>。最新成交是用户最关注的信息，必须实时。通常会做合并（同一价位短时间内的成交合并推送）以降低带宽。</span></li>
+          <li><span class="k">K 线</span><span class="v"><b>服务端聚合</b>。由成交数据按时间窗口聚合而成。关键点是「当前未收盘的 K 线」要持续更新，收盘后固化。多周期（1m/5m/1h/1d）由不同消费者并行聚合。</span></li>
+          <li><span class="k">标记价</span><span class="v"><b>独立计算</b>。合约用的标记价格来自多个现货市场的加权，不是最新成交价。它必须由独立服务计算并广播，不能由撮合产出。</span></li>
+        </ul>
+
+        <div class="note note--warn">
+          <span class="note__tag">常见故障</span>
+          <p>
+            <strong>行情堆积。</strong>当行情推送速度超过客户端消费速度时，
+            服务端的发送缓冲区会堆积，最终导致内存暴涨或连接被强制断开。
+            正确做法是<strong>丢弃旧数据而不是排队</strong> ——
+            对行情而言，最新的一个盘口快照永远比一百个过期的增量更有价值。
+            这需要为每个连接维护「只保留最新状态」的合并缓冲区。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s9"><span class="sec__no">03.9</span>交易链的一致性保证：一张完整的清单</h2>
+
+        <p>
+          把本章讲的所有机制收拢成一张清单。这些是「交易链不会出错」的
+          具体技术保证，每一条都可以在代码或架构里找到对应物。
+        </p>
+
+        <div class="grid-cards">
+          <article><span class="no">GUARANTEE 01</span><h4>确定性撮合</h4><p>单线程 + 全内存 + 无 IO。相同输入序列必然产生相同输出，支持重放验证与灾备切换。</p></article>
+          <article><span class="no">GUARANTEE 02</span><h4>全局有序</h4><p>由定序器分配单调递增序列号，所有下游看到同一顺序。序列号是幂等键与审计线索。</p></article>
+          <article><span class="no">GUARANTEE 03</span><h4>先冻结后撮合</h4><p>资金校验与冻结在进入撮合之前完成，杜绝「成交了但钱不够」的不可逆局面。</p></article>
+          <article><span class="no">GUARANTEE 04</span><h4>终态零冻结</h4><p>订单进入终态时冻结额必须精确归零，通过断言校验，避免资金被永久锁死。</p></article>
+          <article><span class="no">GUARANTEE 05</span><h4>累计而非累加</h4><p>解冻金额按「累计成交量」计算，而非逐笔累加，消除精度截断的累积误差。</p></article>
+          <article><span class="no">GUARANTEE 06</span><h4>幂等消费</h4><p>用 (seq, event_type, entry_no) 唯一约束保证重复消费无副作用，兜底放在数据库层。</p></article>
+          <article><span class="no">GUARANTEE 07</span><h4>成交必成对</h4><p>一笔 Trade 必然同时归属买卖两个订单，双方数量变化绝对值相等。这是撮合的结构性不变量。</p></article>
+          <article><span class="no">GUARANTEE 08</span><h4>主链路无 IO</h4><p>持久化、通知、统计全部异步。主链路只做必要动作，保证延迟可控且不被下游拖垮。</p></article>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 03 章 · 检查清单</span>
+          <p>
+            ① 订单状态机显式建模，终态零冻结有断言；<br>
+            ② 订单簿有 O(1) 撤单索引，同价位严格 FIFO；<br>
+            ③ 「时间」由定序器序列号定义，不用本地时钟；<br>
+            ④ 成交价取被动方价格，并写入规则文档；<br>
+            ⑤ 撮合内核无 IO、无锁、无分配；<br>
+            ⑥ 定序器主备 + 多数派确认，不丢不重；<br>
+            ⑦ 所有事件消费者幂等，唯一约束在存储层兜底；<br>
+            ⑧ 行情用增量 + 序列号，堆积时丢旧不排队。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

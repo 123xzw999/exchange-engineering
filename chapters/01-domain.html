@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01 · 业务全景 — 交易系统工程</title>
+<meta name="description" content="现货、杠杆、合约、理财、法币通道分别是什么，各自的资金关系与风险结构，以及所有业务线背后共用的那一套资金骨架。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="01-domain">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">01</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Domain</span>
+          <span class="dot"></span>
+          <span class="eyebrow">7 节 · 约 21 分钟</span>
+        </div>
+        <h1>业务全景：交易所到底在做什么</h1>
+        <p class="chapter-head__lede">
+          在讨论架构之前，先得知道系统要支撑哪些业务。这些业务表面上五花八门，
+          底层却共用同一套资金骨架 —— 理解这一点，才能理解为什么架构可以既复杂又统一。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>一条业务线的技术复杂度，究竟由什么决定</dd></div>
+          <div><dt>关键产出</dt><dd>业务地图 · 资金关系图 · 风险结构对照</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch01-domain.webp" width="1200" height="675"
+               alt="暗色空间中排列规整的金属几何体" decoding="async">
+        </div>
+        <figcaption><b>FIG 01</b> 业务线像一组形状不同的几何体：外观各异，但都落在同一张资金底座上。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">01.1</span>业务地图：一条业务线的复杂度由什么决定</h2>
+
+        <p>
+          判断一条业务线难不难做，别看它的界面有多花哨，看三个问题：
+          <strong>资金关系是否跨账户</strong>、<strong>是否引入时间维度上的负债</strong>、
+          <strong>风险敞口由谁承担</strong>。三个问题答完，复杂度基本就定了。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead>
+              <tr><th>业务线</th><th>资金关系</th><th>是否产生负债</th><th>风险承担方</th><th>工程复杂度</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>现货交易</td><td>同账户内两币种互换</td><td>否</td><td>用户</td><td>中</td></tr>
+              <tr><td>杠杆借币</td><td>跨账户，含利息计提</td><td>是（借出方债权）</td><td>平台 + 用户</td><td>高</td></tr>
+              <tr><td>永续合约</td><td>保证金账户，含资金费划转</td><td>是（对手方敞口）</td><td>平台承担穿仓</td><td>很高</td></tr>
+              <tr><td>理财产品</td><td>资金从交易账户划入理财账户</td><td>是（应付收益）</td><td>平台</td><td>中</td></tr>
+              <tr><td>法币通道</td><td>链下法币与链上资产的兑换</td><td>是（待结算头寸）</td><td>平台 + 商户</td><td>高（合规重）</td></tr>
+              <tr><td>充提币</td><td>链上 ↔ 平台内部账本</td><td>否（托管）</td><td>平台（托管责任）</td><td>很高（安全重）</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">核心判断</span>
+          <p>
+            真正把复杂度拉高的，是<strong>「负债」与「托管」这两个词</strong>。
+            现货交易只是用户自己账户内的资产互换，平台不欠任何人钱；
+            而一旦引入杠杆、合约、理财，平台账上就出现了「我欠用户多少」这个概念，
+            所有关于准备金的难题随之而来。充值提现则引入另一类责任：用户把资产交给你保管。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">01.2</span>现货交易：最基础的一层</h2>
+
+        <p>
+          现货是所有业务的原子。用户用 A 币换 B 币，交易完成即交割，没有未来义务。
+          它的资金关系干净到可以一句话说清：
+          <em>买方账户的计价币减少、基础币增加；卖方相反；两边变动量相等。</em>
+        </p>
+
+        <p>但「简单」只体现在资金关系上。工程上它已经需要：</p>
+
+        <ul class="list-lines">
+          <li><span class="k">撮合</span><span class="v"><b>价格优先、时间优先的连续竞价</b>。要在微秒级决定哪两笔订单成交、以什么价格成交、成交多少量。</span></li>
+          <li><span class="k">冻结</span><span class="v"><b>下单即冻结资金</b>。挂单期间资产被锁住，不能再用于其他订单。冻结粒度必须精确到「这一笔订单占用了多少」。</span></li>
+          <li><span class="k">精度</span><span class="v"><b>价格与数量的精度约束</b>。BTC/USDT 价格可能保留 2 位小数、数量保留 6 位。成交金额按精度截断后，剩余的零头归属必须明确，否则对账必然出现尾差。</span></li>
+          <li><span class="k">费率</span><span class="v"><b>阶梯费率与返佣</b>。同一笔成交，买卖双方费率可能不同，还要考虑邀请返佣的二级分润。</span></li>
+        </ul>
+
+        <h3 class="sub" id="s2-1">精度的尾差问题</h3>
+
+        <p>
+          这是现货系统里最容易被忽略、又必然踩到的坑。举例：数量 0.12345678 BTC，
+          价格 43210.55 USDT，乘积是 5334.2359... USDT。
+          如果计价币精度只到 0.01，截断后是 5334.23，那 <code>0.0059</code> 去哪了？
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">伪代码 · 尾差处理</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 成交金额必须用一个明确定义的舍入方向，且零头有归属</span>
+<span class="k">quote_amount</span> = round_down(price * qty, quote_precision)
+
+<span class="c">// 尾差 = 理论值 - 实付值，必须记账，不能丢弃</span>
+<span class="k">dust</span> = price * qty - quote_amount
+
+<span class="c">// 两种可接受的处理方式（必须二选一并写进规范）：</span>
+<span class="c">// 方式 A：尾差归平台手续费账户（平台承担，用户不吃亏）</span>
+<span class="c">// 方式 B：尾差从卖方所得中扣除（卖方承担，需在费率说明中披露）</span>
+<span class="c">// 无论选哪种，dust 都必须产生一条账本条目 ——</span>
+<span class="c">// 「消失的零头」是对账差异最常见的来源</span>
+ledger.append(DustEntry{amount: dust, to: FEE_ACCOUNT})</pre>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">血泪教训</span>
+          <p>
+            很多系统的对账差异在运行几个月后才被发现，金额小到没人注意，
+            但累计起来是一笔真实的资金缺口。更麻烦的是，当你想回溯是哪一笔产生的，
+            日志里已经找不到痕迹 —— 因为当初根本没记。
+            <strong>凡是金额被「截断」「取整」「换算」的地方，都必须产生账本条目。</strong>
+          </p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">01.3</span>杠杆与借贷：平台第一次开始「欠钱」</h2>
+
+        <p>
+          杠杆的机制是：用户抵押一部分资产，借入另一部分资产去交易，放大收益与亏损。
+          技术上是三件事的叠加 —— <strong>借贷、计息、强平</strong>。
+        </p>
+
+        <ol class="steps">
+          <li><b>借贷</b><span>资金从「借贷池」划到用户账户，同时在用户账户记一笔负债。这一刻起，平台账上出现了「用户欠我多少」和「我欠出借方多少」两条记录 —— 这就是负债的引入。</span></li>
+          <li><b>计息</b><span>利息按小时或按秒计提。这里有个工程陷阱：<em>计息必须可重放</em>。如果计息逻辑依赖「当前时间」，重放历史时会算出不同的结果。正确做法是用事件时间，且每次计息产生独立的账本条目。</span></li>
+          <li><b>强平</b><span>当风险率低于阈值时，系统自动平仓。这是全系统最危险的操作之一 —— 它在下单，而且是在市场剧烈波动、系统负载最高的时候下单。</span></li>
+        </ol>
+
+        <div class="note note--warn">
+          <span class="note__tag">强平的工程风险</span>
+          <p>
+            强平引擎必须能在极端行情下工作：此时行情推送量是平时的几十倍、
+            用户撤单请求暴涨、网络可能拥塞。如果强平引擎和普通下单走同一条路径，
+            它会因为排队而错过最佳平仓时机，导致穿仓（亏损超过保证金）。
+            实践中强平通常走<strong>独立的、有优先级的通道</strong>，甚至直接对接撮合内核的紧急接口。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">01.4</span>合约：把风险敞口做成一个显式对象</h2>
+
+        <p>
+          合约交易不交换资产本身，只交换「价格变动带来的盈亏」。
+          这个抽象带来一个关键设计：<strong>持仓（Position）必须成为一个独立的一等公民</strong>，
+          而不再是余额的附属品。
+        </p>
+
+        <div class="compare">
+          <div class="good">
+            <h5>U 本位合约</h5>
+            <ul>
+              <li>保证金与盈亏都用稳定币计价，账本结构简单</li>
+              <li>盈亏计算直观：<code>(平仓价 − 开仓价) × 数量 × 方向</code></li>
+              <li>风险：稳定币本身也有脱锚风险</li>
+              <li>工程重点在保证金率与强平队列</li>
+            </ul>
+          </div>
+          <div class="bad">
+            <h5>币本位合约</h5>
+            <ul>
+              <li>保证金与盈亏用标的币计价，出现「非线性盈亏」</li>
+              <li>盈亏公式含倒数项，浮点与精度问题成倍放大</li>
+              <li>同样的仓位，不同价格下的盈亏不是线性关系</li>
+              <li>工程重点在数值稳定性与舍入一致性</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 class="sub" id="s4-1">资金费：一个每 8 小时发生的资金划转</h3>
+
+        <p>
+          永续合约没有到期日，靠资金费把合约价格锚定在现货价格附近。
+          每过一个结算周期，多头与空头之间按持仓量划转一笔资金。
+          它的工程特点很鲜明：
+        </p>
+
+        <ul class="bullets">
+          <li><strong>批量、定时、必须原子</strong> —— 一次结算可能涉及几十万个持仓。要么全部成功，要么全部回滚，不能出现「一半人扣了、一半人没扣」。</li>
+          <li><strong>金额可能为负</strong> —— 多空方向由资金费率符号决定，代码必须同时处理两种流向。</li>
+          <li><strong>必须可重放</strong> —— 结算结果依赖当时的标记价格与持仓快照，这些必须落库，否则无法审计。</li>
+        </ul>
+
+        <h2 class="sec" id="s5"><span class="sec__no">01.5</span>理财与质押：把用户资产变成平台的负债</h2>
+
+        <p>
+          理财产品在技术上是一份<strong>带时间约束的负债合约</strong>：
+          用户把资产划入理财账户，平台承诺在到期日归还本金加收益。
+          它在账本上产生的条目与现货完全不同 —— 现货是「资产互换」，理财是「资产转移 + 负债确认」。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 268" role="img" aria-label="理财业务的资金与负债关系">
+            <defs>
+              <marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.35)"/>
+              </marker>
+            </defs>
+            <rect class="dg-node" x="16" y="26" width="180" height="58" rx="6"/>
+            <text class="dg-t" x="34" y="52">用户交易账户</text>
+            <text class="dg-s" x="34" y="70">USDT 可用余额</text>
+
+            <rect class="dg-node dg-node--gold" x="250" y="26" width="180" height="58" rx="6"/>
+            <text class="dg-t" x="268" y="52">理财账户</text>
+            <text class="dg-s" x="268" y="70">本金已锁定</text>
+
+            <rect class="dg-node dg-node--cyan" x="484" y="26" width="180" height="58" rx="6"/>
+            <text class="dg-t" x="502" y="52">资金运用池</text>
+            <text class="dg-s" x="502" y="70">借贷 / 做市 / 生息</text>
+
+            <path class="dg-line dg-line--gold" d="M196,55 H250" marker-end="url(#ar)"/>
+            <text class="dg-label" x="223" y="48" text-anchor="middle">划转</text>
+
+            <path class="dg-line dg-line--cyan" d="M430,55 H484" marker-end="url(#ar)"/>
+            <text class="dg-label" x="457" y="48" text-anchor="middle">运用</text>
+
+            <!-- 负债确认 -->
+            <rect class="dg-node dg-node--up" x="250" y="132" width="180" height="58" rx="6"/>
+            <text class="dg-t" x="268" y="158">平台负债</text>
+            <text class="dg-s" x="268" y="176">本金 + 应付收益</text>
+
+            <path class="dg-line dg-line--dash" d="M340,84 V132" marker-end="url(#ar)"/>
+            <text class="dg-label" x="348" y="112">确认</text>
+
+            <path class="dg-line dg-line--gold" d="M340,190 V232" marker-end="url(#ar)"/>
+            <rect class="dg-node" x="200" y="234" width="280" height="30" rx="6"/>
+            <text class="dg-s" x="340" y="253" text-anchor="middle">到期日：本金 + 收益 一并归还</text>
+
+            <text class="dg-label" x="16" y="252">风险点：资金运用池的收益若低于承诺收益，缺口由平台自有资金承担</text>
+          </svg>
+          <p class="diagram__cap"><b>图 01-A</b> 理财业务的资金流与负债流是两条独立记录。用户看到的「我的理财余额」是<strong>债权</strong>，而平台账上对应的资产已经被运用出去了 —— 这两者之间的差额，就是平台的真实风险敞口。</p>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">01.6</span>法币通道与 C2C：链下世界与链上账本的对接</h2>
+
+        <p>
+          法币入金是最容易出事、也最容易被低估的环节。它要处理一个本质矛盾：
+          <strong>法币的转移发生在银行体系里，无法与链上账本原子化</strong>。
+          银行转账可能延迟、可能撤回、可能因为风控被冻结。
+        </p>
+
+        <p>C2C（用户对用户）模式把这个矛盾转移给了商户，平台只做托管与仲裁：</p>
+
+        <ol class="steps">
+          <li><b>卖方挂单</b><span>卖方将数字资产划入平台托管账户，资产从「可用」变为「托管冻结」。这一步必须是原子的，否则会出现「挂了单但没锁币」。</span></li>
+          <li><b>买方付款</b><span>买方在链下完成银行转账，然后在平台标记「已付款」。平台此时<em>不能</em>直接放币 —— 因为银行转账可能并未真正到账。</span></li>
+          <li><b>卖方确认</b><span>卖方核实收款后点击放币，托管资产划转给买方。这一步是最终结算点。</span></li>
+          <li><b>争议仲裁</b><span>若卖方不确认或买方未付款，进入客服仲裁流程。技术上的要求是：所有证据（付款凭证、时间戳、聊天记录）必须完整留存且不可篡改。</span></li>
+        </ol>
+
+        <div class="note note--info">
+          <span class="note__tag">工程要点</span>
+          <p>
+            这类业务的技术核心不是高并发，而是<strong>状态机的严谨与证据链的完整</strong>。
+            一个「订单」在这里有十几个状态，每个状态迁移都对应真实世界的资金动作，
+            任何一步可被跳过都会造成损失。它和撮合引擎是两种完全不同的工程能力。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">01.7</span>所有业务背后共用的资金骨架</h2>
+
+        <p>
+          讲了六条业务线，现在把它们收拢。无论业务形态如何变化，
+          底层的资金骨架始终是这四层：
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 316" role="img" aria-label="所有业务共用的四层资金骨架">
+            <!-- 业务层 -->
+            <rect class="dg-node" x="16" y="16" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="40">业务层 · 各条产品线</text>
+            <text class="dg-s" x="34" y="58">现货 · 杠杆 · 合约 · 理财 · 法币 · 质押 · 跟单</text>
+
+            <path class="dg-line dg-line--gold" d="M340,68 V96" marker-end="url(#ar)"/>
+
+            <!-- 账户层 -->
+            <rect class="dg-node dg-node--gold" x="16" y="98" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="122">账户层 · 资金隔离边界</text>
+            <text class="dg-s" x="34" y="140">交易账户 · 合约账户 · 理财账户 · 托管账户 · 手续费账户 · 风险准备金账户</text>
+
+            <path class="dg-line dg-line--gold" d="M340,150 V178" marker-end="url(#ar)"/>
+
+            <!-- 账本层 -->
+            <rect class="dg-node dg-node--cyan" x="16" y="180" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="204">账本层 · 唯一的资金事实来源</text>
+            <text class="dg-s" x="34" y="222">复式记账条目 · 余额快照 · 借贷平衡校验 · 不可篡改审计日志</text>
+
+            <path class="dg-line dg-line--cyan" d="M340,232 V260" marker-end="url(#ar)"/>
+
+            <!-- 托管层 -->
+            <rect class="dg-node dg-node--up" x="16" y="262" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="286">托管层 · 链上与链下的桥</text>
+            <text class="dg-s" x="34" y="304">冷钱包 · 热钱包 · 多签 / MPC · 充值扫描 · 提现广播 · 链上对账</text>
+          </svg>
+          <p class="diagram__cap"><b>图 01-B</b> 四层骨架。业务层可以不断增加新产品，但<strong>账本层永远是唯一的资金事实来源</strong>。任何业务线都不允许绕过账本直接改余额 —— 这是整个系统最重要的一条纪律，第 04 章会展开。</p>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 01 章 · 检查清单</span>
+          <p>
+            ① 每条业务线都明确了「是否产生负债」「谁承担风险」；<br>
+            ② 所有金额截断、取整、换算的位置都有账本条目，不存在「消失的零头」；<br>
+            ③ 计息与结算逻辑基于事件时间而非系统时间，可重放；<br>
+            ④ 强平/清算走独立通道，不与普通下单竞争资源；<br>
+            ⑤ 法币类业务有完整的状态机与不可篡改的证据链；<br>
+            ⑥ 业务层不允许绕过账本层直接修改余额。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

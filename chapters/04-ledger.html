@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · 账本与清结算 — 交易系统工程</title>
+<meta name="description" content="余额的三种形态、复式记账的借贷平衡、冻结与解冻、逐笔结算、可用与可提的分离，以及账本、余额、链上三方对账体系。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="04-ledger">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">04</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Ledger</span>
+          <span class="dot"></span>
+          <span class="eyebrow">7 节 · 约 26 分钟</span>
+        </div>
+        <h1>账本与清结算：钱是怎么被记下来的</h1>
+        <p class="chapter-head__lede">
+          撮合决定了「谁跟谁成交」，账本决定了「钱从谁那里到谁那里」。
+          这一章讲的是资金系统里最不容出错的部分 ——
+          余额为什么必须拆成三个数、复式记账为什么能防住绝大多数资金事故、
+          以及「可用」和「可提」之间那道必须存在的墙。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>余额为什么不能是一个数字，对账靠什么收敛</dd></div>
+          <div><dt>关键产出</dt><dd>余额模型 · 账本结构 · 结算流程 · 对账方案</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch04-ledger.webp" width="1200" height="675"
+               alt="两列对称的发光玻璃条，抽象表现借贷平衡" decoding="async">
+        </div>
+        <figcaption><b>FIG 04</b> 复式记账的本质是两列永远等高的柱子：任何一笔变动，两边同时记录。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">04.1</span>余额为什么必须拆成三个数</h2>
+
+        <p>
+          新手设计的第一版余额通常是一个字段：<code>balance = 1000</code>。
+          这个设计在第一次下单时就会崩掉 —— 因为系统无法回答
+          「这 1000 里有多少正在被挂单占用」。
+        </p>
+
+        <p>正确的模型是把余额拆成三个分量：</p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 258" role="img" aria-label="余额的三种形态">
+            <defs>
+              <marker id="a7" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <rect class="dg-node dg-node--gold" x="16" y="24" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="48">总余额 Total = 可用 Available + 冻结 Frozen + 锁定 Locked</text>
+            <text class="dg-s" x="34" y="66">这是唯一恒等式。任何时候都必须成立，且三个分量各自非负</text>
+
+            <!-- 可用 -->
+            <rect class="dg-node dg-node--down" x="16" y="106" width="200" height="76" rx="6"/>
+            <text class="dg-t" x="34" y="130">可用 Available</text>
+            <text class="dg-s" x="34" y="150">可自由支配</text>
+            <text class="dg-s" x="34" y="168">可下单、可划转、可提现</text>
+
+            <!-- 冻结 -->
+            <rect class="dg-node dg-node--gold" x="240" y="106" width="200" height="76" rx="6"/>
+            <text class="dg-t" x="258" y="130">冻结 Frozen</text>
+            <text class="dg-s" x="258" y="150">被挂单占用</text>
+            <text class="dg-s" x="258" y="168">撤单或成交后释放</text>
+
+            <!-- 锁定 -->
+            <rect class="dg-node dg-node--cyan" x="464" y="106" width="200" height="76" rx="6"/>
+            <text class="dg-t" x="482" y="130">锁定 Locked</text>
+            <text class="dg-s" x="482" y="150">被业务规则占用</text>
+            <text class="dg-s" x="482" y="168">理财本金 / 提现处理中</text>
+
+            <path class="dg-line dg-line--gold" d="M116,76 V106" marker-end="url(#a7)"/>
+            <path class="dg-line dg-line--gold" d="M340,76 V106" marker-end="url(#a7)"/>
+            <path class="dg-line dg-line--gold" d="M564,76 V106" marker-end="url(#a7)"/>
+
+            <rect class="dg-node" x="16" y="200" width="648" height="42" rx="6"/>
+            <text class="dg-s" x="34" y="226">下单校验只检查 Available。冻结不减 Total，只做 Available → Frozen 的搬运 —— 这一步不产生账本条目，只是状态转移</text>
+          </svg>
+          <p class="diagram__cap"><b>图 04-A</b> 余额三态。<strong>冻结不是扣款</strong>，它是同一笔钱从「可支配」变成「被占用」。这个区分极其重要：如果把冻结实现成扣款，撤单时就要「退款」，一旦退款失败，钱就真的丢了；而如果冻结只是状态转移，撤单只需把它搬回去，失败也可以重试。</p>
+        </div>
+
+        <div class="compare">
+          <div class="bad">
+            <h5>错误实现</h5>
+            <ul>
+              <li>下单时直接 <code>balance -= amount</code></li>
+              <li>撤单时 <code>balance += amount</code> 作为补偿</li>
+              <li>冻结额没有独立记录，无法回答「这钱为什么动不了」</li>
+              <li>撤单失败 = 用户资金丢失，只能人工补</li>
+              <li>并发下同一笔钱可能被两笔订单占用</li>
+            </ul>
+          </div>
+          <div class="good">
+            <h5>正确实现</h5>
+            <ul>
+              <li>下单时 <code>available -= amount; frozen += amount</code>（同一事务）</li>
+              <li>撤单时反向搬运，幂等且可重试</li>
+              <li>冻结额可按订单维度查询，客服能直接回答用户</li>
+              <li>冻结操作天然防重：可用余额不足即拒绝</li>
+              <li>任何时刻 Total 不变，资金守恒可验证</li>
+            </ul>
+          </div>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">04.2</span>复式记账：让账本自己证明自己</h2>
+
+        <p>
+          复式记账是五百年前意大利商人发明的技术，至今仍是所有金融系统的基石。
+          它的核心规则只有一条：<strong>每一笔交易至少涉及两个账户，且借方总额恒等于贷方总额</strong>。
+        </p>
+
+        <p>
+          这条规则带来的最大好处是：<em>账本可以自我验证</em>。
+          如果某一笔记错了，借贷平衡立刻被打破，系统能在第一时间发现异常，
+          而不是等到用户投诉。
+        </p>
+
+        <h3 class="sub" id="s2-1">一笔现货成交的完整账本条目</h3>
+
+        <p>
+          用户在 BTC/USDT 市场用 43200 USDT 买入 1 BTC，手续费 0.1%（以 BTC 计）。
+          这笔业务会产生四条账本条目：
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 336" role="img" aria-label="复式记账条目示例">
+            <!-- 表头 -->
+            <rect class="dg-node" x="16" y="16" width="648" height="34" rx="4"/>
+            <text class="dg-s" x="34" y="38">账户</text>
+            <text class="dg-s" x="280" y="38">币种</text>
+            <text class="dg-s" x="400" y="38" text-anchor="end">借方 Debit</text>
+            <text class="dg-s" x="540" y="38" text-anchor="end">贷方 Credit</text>
+            <text class="dg-s" x="650" y="38" text-anchor="end">说明</text>
+
+            <!-- 行 1 -->
+            <path class="dg-line" d="M16,54 H664"/>
+            <text class="dg-s" x="34" y="76" fill="#E8EBF0">买方 · 现货账户</text>
+            <text class="dg-s" x="280" y="76">BTC</text>
+            <text class="dg-s" x="400" y="76" text-anchor="end" fill="#2FA36B">+0.99900000</text>
+            <text class="dg-s" x="540" y="76" text-anchor="end">—</text>
+            <text class="dg-s" x="650" y="76" text-anchor="end">买入所得</text>
+
+            <!-- 行 2 -->
+            <path class="dg-line" d="M16,90 H664"/>
+            <text class="dg-s" x="34" y="112" fill="#E8EBF0">买方 · 现货账户</text>
+            <text class="dg-s" x="280" y="112">USDT</text>
+            <text class="dg-s" x="400" y="112" text-anchor="end">—</text>
+            <text class="dg-s" x="540" y="112" text-anchor="end" fill="#E5484D">−43200.00000000</text>
+            <text class="dg-s" x="650" y="112" text-anchor="end">支付对价</text>
+
+            <!-- 行 3 -->
+            <path class="dg-line" d="M16,126 H664"/>
+            <text class="dg-s" x="34" y="148" fill="#E8EBF0">卖方 · 现货账户</text>
+            <text class="dg-s" x="280" y="148">BTC</text>
+            <text class="dg-s" x="400" y="148" text-anchor="end">—</text>
+            <text class="dg-s" x="540" y="148" text-anchor="end" fill="#E5484D">−1.00000000</text>
+            <text class="dg-s" x="650" y="148" text-anchor="end">卖出交割</text>
+
+            <!-- 行 4 -->
+            <path class="dg-line" d="M16,162 H664"/>
+            <text class="dg-s" x="34" y="184" fill="#E8EBF0">卖方 · 现货账户</text>
+            <text class="dg-s" x="280" y="184">USDT</text>
+            <text class="dg-s" x="400" y="184" text-anchor="end" fill="#2FA36B">+43200.00000000</text>
+            <text class="dg-s" x="540" y="184" text-anchor="end">—</text>
+            <text class="dg-s" x="650" y="184" text-anchor="end">卖出所得</text>
+
+            <!-- 行 5 -->
+            <path class="dg-line" d="M16,198 H664"/>
+            <text class="dg-s" x="34" y="220" fill="#E8EBF0">买方 · 现货账户</text>
+            <text class="dg-s" x="280" y="220">BTC</text>
+            <text class="dg-s" x="400" y="220" text-anchor="end">—</text>
+            <text class="dg-s" x="540" y="220" text-anchor="end" fill="#E5484D">−0.00100000</text>
+            <text class="dg-s" x="650" y="220" text-anchor="end">手续费</text>
+
+            <!-- 行 6 -->
+            <path class="dg-line" d="M16,234 H664"/>
+            <text class="dg-s" x="34" y="256" fill="#E8EBF0">平台 · 手续费账户</text>
+            <text class="dg-s" x="280" y="256">BTC</text>
+            <text class="dg-s" x="400" y="256" text-anchor="end" fill="#2FA36B">+0.00100000</text>
+            <text class="dg-s" x="540" y="256" text-anchor="end">—</text>
+            <text class="dg-s" x="650" y="256" text-anchor="end">平台收入</text>
+
+            <!-- 合计 -->
+            <path class="dg-line dg-line--gold" d="M16,272 H664"/>
+            <text class="dg-t" x="34" y="296">合计（按币种分别平衡）</text>
+            <text class="dg-s" x="280" y="296">BTC</text>
+            <text class="dg-s" x="400" y="296" text-anchor="end" fill="#2FA36B">0.00100000</text>
+            <text class="dg-s" x="540" y="296" text-anchor="end" fill="#E5484D">0.00100000</text>
+
+            <text class="dg-s" x="280" y="318">USDT</text>
+            <text class="dg-s" x="400" y="318" text-anchor="end" fill="#2FA36B">43200.00000000</text>
+            <text class="dg-s" x="540" y="318" text-anchor="end" fill="#E5484D">43200.00000000</text>
+          </svg>
+          <p class="diagram__cap"><b>图 04-B</b> 一笔成交产生六条条目，按币种分别借贷平衡。BTC 侧：进 0.999 + 手续费 0.001 = 出 1.0 ✓；USDT 侧：买方出 43200 = 卖方进 43200 ✓。<strong>任何一侧不平，系统立刻知道出了问题。</strong></p>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">为什么这比「直接改余额」强</span>
+          <p>
+            直接改余额只留下「结果」，不留下「原因」。当余额对不上时，
+            你只能看到一个数字错了，无法回答「哪一步导致的」。
+            复式记账让每一分钱的移动都有<strong>来源与去向</strong>，
+            并且自带校验 —— 这就是账本能自我证明的含义。
+          </p>
+        </div>
+
+        <h3 class="sub" id="s2-2">账本表的结构</h3>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">SQL · 账本表</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="k">CREATE TABLE</span> ledger_entry (
+    id            <span class="k">BIGINT</span>      <span class="k">NOT NULL</span> AUTO_INCREMENT,
+    entry_no      <span class="k">BIGINT</span>      <span class="k">NOT NULL</span>,          <span class="c">-- 全局单调递增，账本内的绝对顺序</span>
+    biz_type      <span class="k">VARCHAR</span>(<span class="n">32</span>) <span class="k">NOT NULL</span>,          <span class="c">-- TRADE / DEPOSIT / WITHDRAW / FEE / FUNDING</span>
+    biz_id        <span class="k">VARCHAR</span>(<span class="n">64</span>) <span class="k">NOT NULL</span>,          <span class="c">-- 业务单号（成交号 / 提现单号）</span>
+    seq           <span class="k">BIGINT</span>      <span class="k">NOT NULL</span>,          <span class="c">-- 来源事件序列号（幂等键组成部分）</span>
+    account_id    <span class="k">VARCHAR</span>(<span class="n">64</span>) <span class="k">NOT NULL</span>,
+    user_id       <span class="k">VARCHAR</span>(<span class="n">64</span>) <span class="k">NOT NULL</span>,
+    asset         <span class="k">VARCHAR</span>(<span class="n">16</span>) <span class="k">NOT NULL</span>,          <span class="c">-- 币种</span>
+    direction     <span class="k">TINYINT</span>     <span class="k">NOT NULL</span>,          <span class="c">-- 1=借 DEBIT  -1=贷 CREDIT</span>
+    amount        <span class="k">BIGINT</span>      <span class="k">NOT NULL</span>,          <span class="c">-- 最小单位的整数，永远为正</span>
+    balance_after <span class="k">BIGINT</span>      <span class="k">NOT NULL</span>,          <span class="c">-- 变动后余额，便于逐笔核对</span>
+    created_at    <span class="k">DATETIME</span>(<span class="n">3</span>) <span class="k">NOT NULL</span>,
+    <span class="k">PRIMARY KEY</span> (id),
+    <span class="k">UNIQUE KEY</span> uk_idem (seq, biz_type, entry_no), <span class="c">-- 幂等：重复写入直接被拦</span>
+    <span class="k">KEY</span> idx_user_asset (user_id, asset, entry_no),  <span class="c">-- 用户流水分页</span>
+    <span class="k">KEY</span> idx_biz (biz_id)                             <span class="c">-- 按业务单号追溯</span>
+) <span class="k">ENGINE</span>=InnoDB;
+
+<span class="c">-- 关键约束：账本表禁止 UPDATE 和 DELETE</span>
+<span class="c">-- 通过数据库权限控制：应用账号只有 INSERT 与 SELECT 权限</span>
+<span class="c">-- 任何修正都通过追加「冲正条目」实现，而不是修改历史</span>
+<span class="k">GRANT</span> <span class="k">INSERT</span>, <span class="k">SELECT</span> <span class="k">ON</span> exchange.ledger_entry <span class="k">TO</span> <span class="s">'app'</span>@<span class="s">'%'</span>;</pre>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">balance_after 的价值</span>
+          <p>
+            冗余存储「变动后余额」看起来违反范式，但它带来两个关键能力：
+            <strong>① 逐笔核对</strong> —— 每条记录都能独立验证
+            <code>上一条的 balance_after ± amount = 本条的 balance_after</code>；
+            <strong>② 快速定位</strong> —— 对账出现差异时，可以用二分查找
+            快速定位到第一条不平的记录，而不用从头重算全部流水。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s3"><span class="sec__no">04.3</span>冻结与解冻的完整生命周期</h2>
+
+        <p>
+          冻结看起来简单，但在「部分成交 + 撤单 + 并发」的组合下，
+          有几种边界情况很容易写错。下面把一笔订单的完整资金轨迹画出来。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 358" role="img" aria-label="冻结与解冻的资金轨迹">
+            <defs>
+              <marker id="a8" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <text class="dg-label" x="16" y="16">买单：43200 USDT × 1 BTC（初始可用 100000 USDT）</text>
+
+            <!-- 步骤 -->
+            <rect class="dg-node" x="16" y="28" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="52">① 下单 · 冻结</text>
+            <text class="dg-s" x="34" y="70">可用 100000 → 56800   冻结 0 → 43200   总额 100000 不变（状态转移，非账本条目）</text>
+
+            <path class="dg-line" d="M340,80 V104" marker-end="url(#a8)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="106" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="130">② 成交 0.4 BTC @ 43200 · 部分结算</text>
+            <text class="dg-s" x="34" y="148">释放冻结 17280 → 扣减并划转；买入 BTC 0.4（扣手续费 0.0004）</text>
+
+            <path class="dg-line" d="M340,158 V182" marker-end="url(#a8)"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="184" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="208">③ 用户撤销剩余 0.6 BTC</text>
+            <text class="dg-s" x="34" y="226">释放剩余冻结 25920 → 可用；订单进入 CANCELED，冻结额必须归零</text>
+
+            <path class="dg-line" d="M340,236 V260" marker-end="url(#a8)"/>
+
+            <rect class="dg-node dg-node--down" x="16" y="262" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="286">④ 终态校验</text>
+            <text class="dg-s" x="34" y="304">可用 = 56800 + 25920 = 82720   冻结 = 0 ✓   持有 BTC 0.3996   总额 = 82720 + 0.3996×43200 ≈ 100000</text>
+
+            <text class="dg-label" x="16" y="342" fill="rgba(214,166,76,.85)">关键：②③ 两步释放的冻结额之和必须精确等于 ① 冻结的总额 —— 多一个最小单位或少一个，都会导致终态不为零</text>
+          </svg>
+          <p class="diagram__cap"><b>图 04-C</b> 冻结的生命周期。第 ② 步与第 ③ 步释放的金额必须精确加总为初始冻结额。<strong>用「累计成交量」计算释放额</strong>（见第 03 章）是保证这一点的唯一可靠方法。</p>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">并发下的经典 bug</span>
+          <p>
+            「部分成交」与「用户撤单」可能同时到达。如果不加控制，
+            可能出现：撤单逻辑读到「剩余 0.6 BTC」并释放了 25920，
+            而同时成交逻辑也在处理一笔 0.6 BTC 的成交并释放 25920 ——
+            两笔都执行，用户凭空多出 25920 USDT。
+          </p>
+          <p>
+            解决办法是让<strong>所有影响同一订单的操作都在定序器排队</strong>。
+            撤单和成交都变成有序事件，由单线程依次处理。
+            这样「读到的剩余量」永远是最新的，不可能重复释放。
+            这正是第 03 章强调「全局有序」的价值所在 ——
+            它不只服务于撮合，也服务于资金安全。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">04.4</span>逐笔结算：为什么不能批量算</h2>
+
+        <p>
+          一个自然的想法是：把一段时间内的成交攒起来，最后统一结算，
+          这样能减少数据库写入。这个想法在资金系统里是危险的。
+        </p>
+
+        <div class="compare">
+          <div class="good">
+            <h5>逐笔结算</h5>
+            <ul>
+              <li>每一笔成交立即产生账本条目，状态实时准确</li>
+              <li>故障时最多丢失一笔，影响面可控</li>
+              <li>用户可以实时看到余额变化</li>
+              <li>对账可以随时进行，不必等批处理窗口</li>
+            </ul>
+          </div>
+          <div class="bad">
+            <h5>批量结算</h5>
+            <ul>
+              <li>批处理窗口内余额是「旧的」，用户看到的是过期数据</li>
+              <li>批处理失败时要重算整批，回滚代价极高</li>
+              <li>无法定位差异来自哪一笔</li>
+              <li>窗口末期积压，容易引发雪崩</li>
+            </ul>
+          </div>
+        </div>
+
+        <p>
+          逐笔结算的性能问题可以靠<strong>批量提交</strong>解决 ——
+          注意这是「批量写数据库」，而不是「批量算资金」。
+          资金的计算仍然逐笔进行，只是把多条 <code>INSERT</code>
+          合并成一个事务提交，减少磁盘同步次数。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go · 批量提交但逐笔计算</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 结算器：从事件流读取成交，逐笔计算资金变动</span>
+<span class="k">func</span> (s *Settler) Run() {
+    batch := <span class="k">make</span>([]LedgerEntry, <span class="n">0</span>, <span class="n">256</span>)
+    ticker := time.NewTicker(<span class="n">5</span> * time.Millisecond)  <span class="c">// 5ms 或攒够 256 条就提交</span>
+
+    <span class="k">for</span> {
+        <span class="k">select</span> {
+        <span class="k">case</span> ev := &lt;-s.events:
+            <span class="c">// 逐笔计算 —— 资金逻辑绝不合并</span>
+            entries := s.calcEntries(ev)
+            batch = <span class="k">append</span>(batch, entries...)
+            <span class="k">if</span> <span class="k">len</span>(batch) &gt;= <span class="n">256</span> {
+                s.flush(batch); batch = batch[:<span class="n">0</span>]
+            }
+        <span class="k">case</span> &lt;-ticker.C:
+            <span class="c">// 批量提交 —— 只影响写入效率，不影响资金语义</span>
+            <span class="k">if</span> <span class="k">len</span>(batch) &gt; <span class="n">0</span> { s.flush(batch); batch = batch[:<span class="n">0</span>] }
+        }
+    }
+}
+
+<span class="c">// flush 在一个事务内写入，保证「要么全成，要么全不成」</span>
+<span class="k">func</span> (s *Settler) flush(batch []LedgerEntry) {
+    s.db.Transaction(<span class="k">func</span>(tx *Tx) <span class="k">error</span> {
+        <span class="k">for</span> _, e := <span class="k">range</span> batch {
+            <span class="k">if</span> err := tx.InsertIgnore(e); err != <span class="k">nil</span> { <span class="k">return</span> err }
+        }
+        <span class="k">return</span> tx.UpdateBalances(batch)   <span class="c">// 余额在同一事务内更新</span>
+    })
+}</pre>
+        </div>
+
+        <h2 class="sec" id="s5"><span class="sec__no">04.5</span>「可用」与「可提」：一道必须存在的墙</h2>
+
+        <p>
+          用户看到的余额里有 10000 USDT，但点提现时却只能提 8000。
+          这不是 bug，而是一道精心设计的墙。原因有三：
+        </p>
+
+        <ol class="steps">
+          <li><b>未结算资金</b><span>法币入金可能还没真正到账（银行转账存在延迟与撤回），但平台已经给用户记了账。这部分钱可以交易，不能提走。</span></li>
+          <li><b>风控限额</b><span>用户当日提现额度已用、账户风险等级受限、或触发了人工审核。这些是策略性的限制。</span></li>
+          <li><b>流动性保护</b><span>平台的热钱包余额有限。如果所有用户同时提现，热钱包会被掏空。设置可提额度是一种缓冲，给冷钱包补充留出时间窗口。</span></li>
+        </ol>
+
+        <div class="note note--info">
+          <span class="note__tag">工程实现</span>
+          <p>
+            「可提」通常是<strong>计算出来的</strong>，而不是存储的：
+            <code>可提 = 可用 − 当日已提 − 冻结中的提现申请 − 风控保留额</code>。
+            把它做成派生值而非独立字段，可以避免「忘记同步」导致的脏数据。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">04.6</span>手续费、资金费与返佣的记账</h2>
+
+        <p>
+          这些「附加资金流」是最容易记错的地方，因为它们金额小、频率高、
+          且往往涉及多方分润。原则只有一条：<strong>每一笔都必须是完整的复式分录</strong>。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>类型</th><th>资金流向</th><th>记账要点</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>交易手续费</td>
+                <td>用户 → 平台手续费账户</td>
+                <td>按成交额与费率计算，注意币种（可能用计价币也可能用基础币），且必须与成交在同一事务</td>
+              </tr>
+              <tr>
+                <td>邀请返佣</td>
+                <td>平台手续费账户 → 邀请人账户</td>
+                <td>按比例拆分，可能多级。必须在手续费入账后立即计算，否则会漏</td>
+              </tr>
+              <tr>
+                <td>资金费</td>
+                <td>多头账户 ↔ 空头账户</td>
+                <td>总额守恒（一方付出等于另一方收取），平台不参与。批量结算时必须原子</td>
+              </tr>
+              <tr>
+                <td>借贷利息</td>
+                <td>借款人账户 → 出借人账户 + 平台利息账户</td>
+                <td>按时间计提，必须可重放。利率变更要分段计算，不能整体重算</td>
+              </tr>
+              <tr>
+                <td>提现手续费</td>
+                <td>用户账户 → 平台手续费账户</td>
+                <td>在提现申请时冻结，链上广播成功后正式扣减</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">资金费的特殊性</span>
+          <p>
+            资金费是<strong>用户之间的零和转移</strong>，平台只是执行者。
+            这意味着它天然满足「总额守恒」—— 如果对账发现资金费环节出现总额变化，
+            一定是记账逻辑写错了（比如手续费被重复扣除，
+            或者某一方被扣了但对手方没有收到）。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">04.7</span>对账：让差异无处藏身</h2>
+
+        <p>
+          对账是资金系统最后也最重要的一道防线。它的目的不是「证明系统没问题」，
+          而是<strong>在问题扩大之前发现它</strong>。有效的对账必须覆盖三个层面。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 306" role="img" aria-label="对账的三道防线">
+            <defs>
+              <marker id="a9" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <!-- 第一道 -->
+            <rect class="dg-node dg-node--down" x="16" y="16" width="648" height="76" rx="6"/>
+            <text class="dg-t" x="34" y="40">第一道 · 实时流水对账（毫秒级）</text>
+            <text class="dg-s" x="34" y="60">每次余额变更后，校验 balance_after 与上一条记录是否连续</text>
+            <text class="dg-s" x="34" y="78">校验借贷是否平衡、余额是否非负。任何失败立即告警并阻断后续操作</text>
+
+            <path class="dg-line dg-line--gold" d="M340,92 V116" marker-end="url(#a9)"/>
+
+            <!-- 第二道 -->
+            <rect class="dg-node dg-node--gold" x="16" y="118" width="648" height="76" rx="6"/>
+            <text class="dg-t" x="34" y="142">第二道 · 日终轧账（每日）</text>
+            <text class="dg-s" x="34" y="162">从账本条目重算所有账户余额，与余额表的当前值逐条比对</text>
+            <text class="dg-s" x="34" y="180">校验每个币种的总额守恒：Σ所有用户余额 + 平台账户 = 期初总量 + 净流入</text>
+
+            <path class="dg-line dg-line--gold" d="M340,194 V218" marker-end="url(#a9)"/>
+
+            <!-- 第三道 -->
+            <rect class="dg-node dg-node--up" x="16" y="220" width="648" height="76" rx="6"/>
+            <text class="dg-t" x="34" y="244">第三道 · 链上余额对账（每小时 / 每日）</text>
+            <text class="dg-s" x="34" y="264">查询所有钱包地址的实际链上余额，与「平台应持有的资产总量」比对</text>
+            <text class="dg-s" x="34" y="282">差异意味着：充值漏记、提现重复、私钥泄露、或链上发生重组</text>
+          </svg>
+          <p class="diagram__cap"><b>图 04-D</b> 三道防线。<strong>第一道防逻辑错误，第二道防累积偏差，第三道防外部风险</strong>（链上资产被盗、被冻结、被重组）。三道的检查频率与目的完全不同，缺一不可。</p>
+        </div>
+
+        <h3 class="sub" id="s7-1">差异出现时怎么办</h3>
+
+        <p>
+          对账的目的是发现差异，而差异一旦出现，处理流程必须预先定义好，
+          否则现场会陷入混乱。推荐的处置顺序：
+        </p>
+
+        <ol class="steps">
+          <li><b>立即冻结风险敞口</b><span>暂停该币种的提现。这是第一动作 —— 阻止损失扩大比查清原因更紧急。注意：暂停提现会影响所有用户，所以只冻结受影响的币种，不要全站暂停。</span></li>
+          <li><b>定位第一条不平的记录</b><span>利用 <code>balance_after</code> 做二分查找，快速找到差异开始的序列号，而不是重算全部流水。</span></li>
+          <li><b>判断方向与规模</b><span>是平台多给了用户（平台损失），还是少给了（用户损失）？涉及多少用户、多少钱？这决定了处置的紧急程度与沟通策略。</span></li>
+          <li><b>保留现场</b><span>不要急着「修复数据」。先把相关流水、日志、事件快照完整导出并归档 —— 如果是安全事件，这些是取证材料，改了就无法追溯。</span></li>
+          <li><b>补偿而非修改</b><span>确认原因后，通过追加冲正条目修正余额，而不是 UPDATE 历史记录。修改历史会让审计链断裂。</span></li>
+          <li><b>补上检测能力</b><span>复盘时必须回答：为什么这道防线没能在更早的时候发现？如果现有的检查没能覆盖这个场景，就要把它加进对账规则。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 04 章 · 检查清单</span>
+          <p>
+            ① 余额拆成可用/冻结/锁定三个分量，恒等式 Total = 三者之和成立；<br>
+            ② 冻结是状态转移而非扣款，撤单是反向搬运，幂等可重试；<br>
+            ③ 所有资金变动都产生复式账本条目，按币种借贷平衡；<br>
+            ④ 账本表禁止 UPDATE/DELETE，通过数据库权限强制；<br>
+            ⑤ 释放冻结额按累计成交量计算，保证终态精确归零；<br>
+            ⑥ 逐笔计算资金、批量提交事务，绝不做批量算账；<br>
+            ⑦ 「可提」是派生值而非存储字段；<br>
+            ⑧ 对账三道防线全部上线，差异处置流程预先定义。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

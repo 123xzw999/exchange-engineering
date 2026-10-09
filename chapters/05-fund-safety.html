@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05 · 资金安全 — 交易系统工程</title>
+<meta name="description" content="资金守恒定律、双录与不可变审计日志、冷热钱包分离、多签与 MPC、提现风控、准备金与保险基金，以及典型资金事故的模式复盘。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="05-fund-safety">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">05</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Fund Safety</span>
+          <span class="dot"></span>
+          <span class="eyebrow">8 节 · 约 30 分钟</span>
+        </div>
+        <h1>资金安全：币为什么不会凭空消失</h1>
+        <p class="chapter-head__lede">
+          「我们的资产是安全的」—— 这是一句承诺。而工程要做的是把承诺
+          变成一组<strong>可被程序验证的不变量</strong>。这一章拆解资金安全体系的每一层：
+          从账本守恒、审计留痕，到冷热分离、提现风控，
+          最后复盘历史上真实发生过的资金事故，看它们究竟绕过了哪一道防线。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>「不丢币」在工程上由哪些机制保证</dd></div>
+          <div><dt>关键产出</dt><dd>资金守恒体系 · 钱包架构 · 提现风控 · 事故模式库</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch05-fund-safety.webp" width="1200" height="675"
+               alt="微开的厚重钢制金库门，缝隙中透出金色光线" decoding="async">
+        </div>
+        <figcaption><b>FIG 05</b> 金库的价值不在于门有多厚，而在于「打开它需要几个人、几把钥匙、几道程序」。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">05.1</span>资金守恒：把承诺变成可验证的不变量</h2>
+
+        <p>
+          「币不会凭空消失」这句话，翻译成工程语言是这样的：
+        </p>
+
+        <div class="keyline">
+          <span class="keyline__tag">资金守恒定律</span>
+          <p>
+            对任意币种，任意时刻：<br>
+            <strong>Σ（所有用户账户余额）+ Σ（所有平台账户余额）= 链上实际持有的该币种总量 + 在途量</strong>
+          </p>
+          <p>
+            这个等式必须恒成立。它不是一句愿景，而是一个可以在任意时刻、
+            用一条 SQL 加一次链上查询验证的断言。<strong>只要它能被持续验证，
+            资金就不可能凭空消失</strong> —— 因为消失意味着等式被打破，
+            而打破会被立刻发现。
+          </p>
+        </div>
+
+        <p>要让这个等式真正可验证，需要三样东西同时存在：</p>
+
+        <ul class="list-lines">
+          <li><span class="k">唯一账本</span><span class="v"><b>所有余额变动必须经过账本</b>。任何绕过账本直接改余额的代码路径，都会让等式失效。这条纪律要靠架构约束（账本服务是唯一入口）与代码审查共同保证。</span></li>
+          <li><span class="k">可查询</span><span class="v"><b>链上余额可随时查询</b>。这要求平台知道自己的全部地址。使用 HD 钱包（分层确定性钱包）可以做到「从一个种子推导出所有地址」，不会漏。</span></li>
+          <li><span class="k">在途量</span><span class="v"><b>「在途」必须显式建模</b>。用户提现已经广播但未确认、充值已扫描但未达确认数 —— 这些资产既不在用户可用余额里，也还没真正进出链上。忽略在途量会导致对账长期存在小额差异。</span></li>
+        </ul>
+
+        <div class="note note--warn">
+          <span class="note__tag">最常见的不守恒来源</span>
+          <p>
+            实践中，等式被打破的原因往往不是「黑客偷了币」，而是这些日常小事：
+            <strong>① 手续费扣了但没入账</strong>；
+            <strong>② 精度截断的零头被丢弃</strong>；
+            <strong>③ 批量操作部分成功部分失败</strong>；
+            <strong>④ 人工后台直接改数据库</strong>。
+            这四类占实际差异的绝大多数 —— 它们比外部攻击更常见，
+            也更难被发现，因为金额通常很小。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5-2"><span class="sec__no">05.2</span>双录与不可变审计日志</h2>
+
+        <p>
+          复式记账保证了「账本内部自洽」，但它不能防止<strong>有人直接篡改账本</strong>。
+          要防住这一层，需要两个额外的机制。
+        </p>
+
+        <h3 class="sub" id="s5-2-1">双录：两个独立系统各记一遍</h3>
+
+        <p>
+          「双录」（Double Record）指的是：同一笔资金变动，
+          由<strong>两个独立实现的系统分别记录</strong>，然后定期比对。
+          常见组合是：
+        </p>
+
+        <div class="grid-cards">
+          <article><span class="no">RECORD A</span><h4>在线账本</h4><p>交易系统内的账本表，用于实时余额查询与业务判断。性能优先，可被应用写入。</p></article>
+          <article><span class="no">RECORD B</span><h4>离线流水</h4><p>从事件流独立消费生成的资金流水，写入只读存储。应用账号无写权限，只能追加。</p></article>
+          <article><span class="no">COMPARE</span><h4>定时比对</h4><p>两套记录按 (业务单号, 币种, 金额) 逐条比对。差异即意味着有一方出错，或被篡改。</p></article>
+        </div>
+
+        <p>
+          双录的价值在于<strong>提高篡改成本</strong>。要悄无声息地改掉一笔资金记录，
+          必须同时攻破两套独立系统，并抹掉两边的一致性 —— 难度呈指数上升。
+        </p>
+
+        <h3 class="sub" id="s5-2-2">哈希链：让历史无法被悄悄改写</h3>
+
+        <p>
+          审计日志必须做到「追加容易、修改不可能」。实现方式是哈希链：
+          每条日志记录包含前一条的哈希，形成一条首尾相连的链。
+          任何人修改中间某条记录，后续所有记录的哈希都会对不上。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go · 哈希链审计日志</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="k">type</span> AuditRecord <span class="k">struct</span> {
+    Seq       <span class="k">uint64</span>  <span class="c">// 单调递增</span>
+    Timestamp <span class="k">int64</span>
+    Actor     <span class="k">string</span>  <span class="c">// 操作者（用户 / 运营 / 系统）</span>
+    Action    <span class="k">string</span>  <span class="c">// WITHDRAW_APPROVE / BALANCE_ADJUST / KEY_ROTATE</span>
+    Target    <span class="k">string</span>  <span class="c">// 操作对象</span>
+    Payload   <span class="k">string</span>  <span class="c">// 操作详情（JSON）</span>
+    PrevHash  <span class="k">string</span>  <span class="c">// 上一条记录的哈希</span>
+    Hash      <span class="k">string</span>  <span class="c">// 本条记录的哈希</span>
+}
+
+<span class="k">func</span> (l *AuditLog) Append(r AuditRecord) <span class="k">error</span> {
+    r.Seq = l.nextSeq()
+    r.Timestamp = time.Now().UnixMilli()
+    r.PrevHash = l.lastHash
+
+    <span class="c">// 哈希内容包含所有字段 + 前序哈希 → 任何改动都会破坏链</span>
+    h := sha256.New()
+    fmt.Fprintf(h, <span class="s">"%d|%d|%s|%s|%s|%s|%s"</span>,
+        r.Seq, r.Timestamp, r.Actor, r.Action, r.Target, r.Payload, r.PrevHash)
+    r.Hash = hex.EncodeToString(h.Sum(<span class="k">nil</span>))
+
+    l.lastHash = r.Hash
+    <span class="k">return</span> l.store.Append(r)   <span class="c">// 只追加，永不更新</span>
+}
+
+<span class="c">// 定期（每小时）校验：从第 1 条开始重算哈希，任何一条对不上即告警</span>
+<span class="k">func</span> (l *AuditLog) Verify() <span class="k">error</span> {
+    <span class="k">var</span> prev <span class="k">string</span>
+    <span class="k">return</span> l.store.Scan(<span class="k">func</span>(r AuditRecord) <span class="k">error</span> {
+        <span class="k">if</span> r.PrevHash != prev {
+            <span class="k">return</span> fmt.Errorf(<span class="s">"审计链断裂于 seq=%d：期望前序 %s，实际 %s"</span>,
+                r.Seq, prev, r.PrevHash)
+        }
+        <span class="k">if</span> recompute(r) != r.Hash {
+            <span class="k">return</span> fmt.Errorf(<span class="s">"seq=%d 记录内容被篡改"</span>, r.Seq)
+        }
+        prev = r.Hash
+        <span class="k">return</span> <span class="k">nil</span>
+    })
+}</pre>
+        </div>
+
+        <div class="note note--info">
+          <span class="note__tag">更强的做法</span>
+          <p>
+            把每小时的链尾哈希<strong>发布到外部不可控的地方</strong>
+            （例如写入公有链、或提交到第三方时间戳服务），
+            这样连平台自己都无法事后重写历史 —— 因为外部锚点对不上。
+            这是「可验证审计」的终极形态。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5-3"><span class="sec__no">05.3</span>钱包架构：冷热分离是资金安全的骨架</h2>
+
+        <p>
+          平台持有的资产不可能全放在联网的机器上 —— 那等于把金库钥匙挂在门口。
+          标准做法是把资产按「使用频率」分层，越少动用的放得越安全。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 470" role="img" aria-label="冷热钱包分层架构">
+            <defs>
+              <marker id="a10" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.4)"/>
+              </marker>
+            </defs>
+
+            <!-- 热钱包 -->
+            <rect class="dg-node dg-node--up" x="16" y="16" width="648" height="96" rx="6"/>
+            <text class="dg-t" x="34" y="40">热钱包 · Hot Wallet（联网，自动签名）</text>
+            <text class="dg-s" x="34" y="60">用于日常提现，占总量 ≤ 5%</text>
+            <text class="dg-s" x="34" y="78">私钥加密后存于在线环境，可由提现系统自动调用</text>
+            <text class="dg-s" x="34" y="96">余额阈值触发自动补充：低于下限从温钱包划入，高于上限划出</text>
+
+            <path class="dg-line dg-line--gold" d="M340,112 V140" marker-end="url(#a10)"/>
+            <text class="dg-label" x="348" y="130">余额不足时补充</text>
+
+            <!-- 温钱包 -->
+            <rect class="dg-node dg-node--gold" x="16" y="142" width="648" height="96" rx="6"/>
+            <text class="dg-t" x="34" y="166">温钱包 · Warm Wallet（半离线，人工触发）</text>
+            <text class="dg-s" x="34" y="186">用于向热钱包补充，占总量 5% ~ 20%</text>
+            <text class="dg-s" x="34" y="204">私钥由 HSM 或 MPC 分片持有，签名需多人授权</text>
+            <text class="dg-s" x="34" y="222">每次动用记录审计日志，触发通知与人工复核</text>
+
+            <path class="dg-line dg-line--gold dg-line--dash" d="M340,238 V266" marker-end="url(#a10)"/>
+            <text class="dg-label" x="348" y="256">大额划转需审批</text>
+
+            <!-- 冷钱包 -->
+            <rect class="dg-node dg-node--down" x="16" y="268" width="648" height="96" rx="6"/>
+            <text class="dg-t" x="34" y="292">冷钱包 · Cold Wallet（完全离线）</text>
+            <text class="dg-s" x="34" y="312">存放绝大部分资产，占总量 ≥ 75%</text>
+            <text class="dg-s" x="34" y="330">私钥从不接触网络：纸钱包 / 硬件钱包 / 离线签名机 / MPC 门限</text>
+            <text class="dg-s" x="34" y="348">动用需多人多地把各自的分片凑齐，且签名过程完全离线</text>
+
+            <path class="dg-line dg-line--dash" d="M340,364 V392" marker-end="url(#a10)"/>
+
+            <!-- 密钥管理 -->
+            <rect class="dg-node dg-node--cyan" x="16" y="394" width="648" height="60" rx="6"/>
+            <text class="dg-t" x="34" y="418">密钥管理 · HSM / MPC / 多签</text>
+            <text class="dg-s" x="34" y="438">任何单点都无法独立完成签名 —— 这是整个资金安全体系的地基</text>
+          </svg>
+          <p class="diagram__cap"><b>图 05-A</b> 冷热分层。<strong>分层的目的不是「让黑客更难偷」，而是「让单次失窃的损失上限可控」</strong>。热钱包即使完全失陷，损失也被限制在总量的 5% 以内 —— 这就是分层最直接的价值。</p>
+        </div>
+
+        <h3 class="sub" id="s5-3-1">三种密钥保护方案</h3>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>方案</th><th>原理</th><th>优势</th><th>代价</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>多签钱包</td>
+                <td>m-of-n 签名，例如 3 把钥匙里凑齐 2 把才能转账</td>
+                <td>链上原生支持，透明可验证；无单点</td>
+                <td>地址格式特殊；每次转账需多人协作，操作繁琐</td>
+              </tr>
+              <tr>
+                <td>HSM 硬件模块</td>
+                <td>私钥永远不出硬件，签名在模块内完成</td>
+                <td>密钥无法被导出，即使主机被攻破也拿不到</td>
+                <td>成本高；仍有单点（HSM 本身）；依赖单一厂商</td>
+              </tr>
+              <tr>
+                <td>MPC 门限签名</td>
+                <td>私钥被拆成多份分片，各方用分片协同签名，从不合成完整私钥</td>
+                <td>无单点；链上表现为普通地址；分片可动态轮换</td>
+                <td>实现复杂；签名需要多方在线通信；协议有实现风险</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">共同原则</span>
+          <p>
+            三种方案的共同点是：<strong>没有任何一个人、任何一台机器能单独转走资金</strong>。
+            这不是技术选择，而是治理选择 —— 它承认「人可能被收买、机器可能被攻破」，
+            并据此设计出即使单个环节失陷也不会全盘皆输的结构。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5-4"><span class="sec__no">05.4</span>提现：资金出口的六道闸门</h2>
+
+        <p>
+          提现是资金唯一的出口，也是最需要防守的地方。
+          一次成功的恶意提现意味着资产真实离开平台。
+          因此提现链路上堆叠了最多的检查。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 428" role="img" aria-label="提现的六道闸门">
+            <rect class="dg-node" x="16" y="16" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="38">① 身份与安全验证</text>
+            <text class="dg-s" x="34" y="55">登录态 + 二次验证（TOTP / 短信 / 邮箱）+ 提现密码，三者不可互相替代</text>
+
+            <path class="dg-line" d="M340,62 V76"/>
+
+            <rect class="dg-node" x="16" y="78" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="100">② 地址白名单</text>
+            <text class="dg-s" x="34" y="117">新地址需等待 24~48 小时生效，期间通过多渠道通知用户 —— 给「账号已被盗」留出发现窗口</text>
+
+            <path class="dg-line" d="M340,124 V138"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="140" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="162">③ 额度与频率控制</text>
+            <text class="dg-s" x="34" y="179">单笔上限、日累计上限、账户风险等级动态调整；高频小额提现同样要拦截</text>
+
+            <path class="dg-line" d="M340,186 V200"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="202" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="224">④ 行为风控评分</text>
+            <text class="dg-s" x="34" y="241">设备指纹变更、异地登录、提现时间异常、历史行为突变 —— 综合评分超阈值转人工</text>
+
+            <path class="dg-line" d="M340,248 V262"/>
+
+            <rect class="dg-node dg-node--up" x="16" y="264" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="286">⑤ 人工复核（大额 / 高风险）</text>
+            <text class="dg-s" x="34" y="303">双人独立审核，两人不可为同一人、不可使用同一账号 —— 四眼原则</text>
+
+            <path class="dg-line" d="M340,310 V324"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="326" width="648" height="46" rx="6"/>
+            <text class="dg-t" x="34" y="348">⑥ 延迟执行与熔断</text>
+            <text class="dg-s" x="34" y="365">提现进入延迟队列（大额延时更长），期间可撤回；异常时按币种熔断，暂停该币提现</text>
+
+            <rect class="dg-node" x="16" y="386" width="648" height="34" rx="6"/>
+            <text class="dg-s" x="34" y="408">最后：热钱包余额检查 —— 不足则拒绝或触发温钱包补充，绝不允许「先记账后补币」</text>
+          </svg>
+          <p class="diagram__cap"><b>图 05-B</b> 提现的六道闸门。<strong>每一道都能独立拦截</strong>，且拦截理由都会记录。攻击者要成功，必须同时绕过全部六道 —— 这比攻破任何单一环节都难得多。</p>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">延迟执行的价值</span>
+          <p>
+            很多人觉得「提现延迟」是平台在为难用户。但从安全角度看，
+            延迟是给<strong>账号真正的主人</strong>留出的反应时间。
+            当账号被盗、攻击者试图把资产提走时，24 小时的延迟意味着
+            用户会收到通知邮件、短信、App 推送 —— 有足够时间联系平台冻结账户。
+            没有延迟的系统，攻击者可以在几分钟内清空账户。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5-5"><span class="sec__no">05.5</span>准备金、保险基金与穿仓处理</h2>
+
+        <p>
+          前面讲的是「防住攻击」。但还有一类风险与攻击无关：
+          <strong>市场风险</strong>。极端行情下用户穿仓，亏损超过其保证金，
+          这个缺口由谁承担？
+        </p>
+
+        <ol class="steps">
+          <li><b>保险基金</b><span>从清算收益与部分手续费中提取，专门用于覆盖穿仓损失。它是第一道缓冲，也是公开可查的（很多平台会公示保险基金余额，作为偿付能力的信号）。</span></li>
+          <li><b>自动减仓（ADL）</b><span>当保险基金不足以覆盖时，系统按「盈利与杠杆倍数」排序，强制平掉部分盈利仓位，用它们的利润填补缺口。这是最不受欢迎但必要的机制，因为替代方案是平台破产、所有人一起损失。</span></li>
+          <li><b>风险准备金</b><span>平台自有资金，用于覆盖超出前两者的极端损失。它是最后一道防线，也是「平台是否真的有能力兜底」的实际体现。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">准备金证明</span>
+          <p>
+            更进一步的机制是<strong>准备金证明（Proof of Reserves）</strong>：
+            平台公开所有用户余额的默克尔树根哈希，用户可以用自己的余额
+            生成证明，验证「我的余额被包含在总数里」；
+            同时公开链上地址，任何人都可以核对链上资产是否覆盖用户总负债。
+          </p>
+          <p>
+            这个机制的意义在于：它把「平台说我有钱」变成了
+            <strong>「任何人都能自己验证平台有钱」</strong>。
+            这是资金安全体系里唯一一个把验证权交给外部的设计。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5-6"><span class="sec__no">05.6</span>事故模式复盘：它们绕过了哪一道防线</h2>
+
+        <p>
+          下面四类事故在行业历史上反复出现。它们不涉及具体平台，
+          而是抽象成<strong>可识别的模式</strong> —— 目的是让你在自己的系统里
+          能对照检查「我有没有同样的漏洞」。
+        </p>
+
+        <div class="grid-cards">
+          <article>
+            <span class="no">MODE 01</span>
+            <h4>热钱包私钥泄露</h4>
+            <p>私钥以明文或弱加密形式存放在联网服务器，或出现在日志、配置文件、代码仓库中。攻击者拿到私钥后直接转走热钱包资产。</p>
+            <p style="margin-top:10px;color:var(--gold)">防线失效点：密钥管理 —— 私钥不应以任何形式出现在可被读取的地方。</p>
+          </article>
+          <article>
+            <span class="no">MODE 02</span>
+            <h4>内部人越权操作</h4>
+            <p>拥有后台权限的人员（运维、客服、开发）利用权限直接修改用户余额、批准异常提现，或导出敏感数据。</p>
+            <p style="margin-top:10px;color:var(--gold)">防线失效点：内控 —— 缺少四眼原则、权限过大、操作无审计。</p>
+          </article>
+          <article>
+            <span class="no">MODE 03</span>
+            <h4>假充值 / 链上重组</h4>
+            <p>攻击者利用交易回滚、伪造链上事件、或利用确认数不足的漏洞，让系统误认为充值成功并放出资产，随后链上交易被撤销。</p>
+            <p style="margin-top:10px;color:var(--gold)">防线失效点：充值确认策略 —— 确认数不足、未处理区块重组。</p>
+          </article>
+          <article>
+            <span class="no">MODE 04</span>
+            <h4>提现重放与并发绕过</h4>
+            <p>同一笔提现请求被重复提交、或在并发下绕过余额检查被多次执行。也可能通过「提现 + 撤单」的组合在时间差内套取资产。</p>
+            <p style="margin-top:10px;color:var(--gold)">防线失效点：幂等与并发控制 —— 缺少唯一约束、检查与执行不在同一事务。</p>
+          </article>
+        </div>
+
+        <h3 class="sub" id="s5-6-1">从模式到检查项</h3>
+
+        <p>
+          这四类模式可以直接转化成自查清单。如果你的系统对每一条都能给出明确答案，
+          就已经挡住了历史上绝大多数资金事故：
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>问题</th><th>合格答案的样子</th></tr></thead>
+            <tbody>
+              <tr><td>私钥存在哪里？</td><td>冷钱包私钥从不接触网络；热钱包私钥存于 HSM 或 MPC 分片，且不存在于任何日志、配置、代码中</td></tr>
+              <tr><td>谁能批准提现？</td><td>超过阈值必须双人复核，两人权限分离，所有操作进入哈希链审计日志</td></tr>
+              <tr><td>充值确认数是多少？</td><td>按币种与链的出块特性设定，且明确处理区块重组：重组后的已入账充值必须能被回滚</td></tr>
+              <tr><td>提现接口幂等吗？</td><td>有唯一约束兜底；余额检查与扣减在同一事务内完成；并发请求由定序器串行处理</td></tr>
+              <tr><td>谁能改余额？</td><td>只有账本服务能改，且只能通过追加条目；人工调账走独立审批流并留痕</td></tr>
+              <tr><td>对账多久跑一次？</td><td>流水对账实时、日终轧账每日、链上对账每小时，三者差异均触发告警</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 class="sec" id="s5-7"><span class="sec__no">05.7</span>充值侧：链上资产进入系统的第一公里</h2>
+
+        <p>
+          提现是出口，充值就是入口。入口的风险不在「钱被偷」，
+          而在<strong>「钱没到但系统认为到了」</strong>，或者反过来
+          「钱到了但系统没认」。
+        </p>
+
+        <h3 class="sub" id="s5-7-1">地址生成：为什么必须用 HD 钱包</h3>
+
+        <p>
+          如果为每个用户随机生成一个独立私钥，平台必须安全存储成千上万个私钥 ——
+          备份、恢复、轮换都会变成噩梦，而且极易出现「某个私钥丢了，
+          用户的钱永远取不出来」。
+        </p>
+
+        <p>
+          HD 钱包（BIP32/BIP44）解决了这个问题：<strong>从一个种子确定性推导出无限多个地址</strong>。
+          平台只需安全保管一个种子，就能恢复全部地址。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">伪代码 · HD 地址派生</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 种子是整个钱包体系的根 —— 它必须离线保管，且有多份异地备份</span>
+master_seed = <span class="s">"..."</span>   <span class="c">// 由高强度随机数生成，绝不出现在联网环境</span>
+
+<span class="c">// 按 BIP44 路径派生子密钥：m / purpose' / coin_type' / account' / change / index</span>
+<span class="c">// 例如 BTC 的第 0 个账户、第 0 个外部地址、索引 1000：</span>
+path = <span class="s">"m/44'/0'/0'/0/1000"</span>
+child_key = derive(master_seed, path)      <span class="c">// 确定性：同样的种子+路径必然得到同样的密钥</span>
+address   = to_address(child_key.public)
+
+<span class="c">// 关键：地址派生可以在联网环境做（只需要公钥），</span>
+<span class="c">//      但私钥派生与签名必须在离线环境做。</span>
+<span class="c">// 这就是「观察钱包 / 冷签名」的分离：</span>
+<span class="c">//   在线侧：知道所有地址，能监控余额，但不能签名</span>
+<span class="c">//   离线侧：持有种子，能签名，但不联网</span></pre>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">充值的三个必答题</span>
+          <p>
+            <strong>① 确认数够不够？</strong>
+            确认数不足意味着交易可能被重组掉。不同链的最终性不同，
+            确认数必须按链的特性设定，不能一刀切。
+          </p>
+          <p>
+            <strong>② 区块重组怎么办？</strong>
+            必须能识别「已经入账的充值所在区块被回滚」的情况，
+            并执行回滚：如果用户还没动用这笔资产，直接冲正；
+            如果已经动用了，就需要风控介入 —— 这正是确认数要设够的原因。
+          </p>
+          <p>
+            <strong>③ 小额充值怎么处理？</strong>
+            低于链上手续费的充值（粉尘攻击）不应入账，
+            否则会变成「归集时手续费比资产还贵」的尴尬局面。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5-8"><span class="sec__no">05.8</span>资金安全体系的完整清单</h2>
+
+        <p>
+          把本章所有机制收拢。这张清单可以直接用作系统上线前的资金安全评审表 ——
+          每一项都应当是「已验证」，而不是「计划做」。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 336" role="img" aria-label="资金安全五层体系">
+            <rect class="dg-node dg-node--gold" x="16" y="16" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="40">第一层 · 账本正确性</text>
+            <text class="dg-s" x="34" y="58">复式记账 · 借贷平衡 · 唯一账本入口 · 账本表禁止 UPDATE/DELETE</text>
+
+            <path class="dg-line" d="M340,72 V86"/>
+
+            <rect class="dg-node dg-node--gold" x="16" y="88" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="112">第二层 · 可验证性</text>
+            <text class="dg-s" x="34" y="130">资金守恒断言 · 双录比对 · 哈希链审计日志 · 准备金证明</text>
+
+            <path class="dg-line" d="M340,144 V158"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="160" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="184">第三层 · 密钥与钱包</text>
+            <text class="dg-s" x="34" y="202">冷热分离 · HSM / MPC / 多签 · 观察钱包与冷签名分离 · 种子异地备份</text>
+
+            <path class="dg-line" d="M340,216 V230"/>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="232" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="256">第四层 · 流程控制</text>
+            <text class="dg-s" x="34" y="274">提现六道闸门 · 四眼原则 · 延迟执行 · 按币种熔断 · 地址白名单</text>
+
+            <path class="dg-line" d="M340,288 V302"/>
+
+            <rect class="dg-node dg-node--up" x="16" y="304" width="648" height="26" rx="6"/>
+            <text class="dg-s" x="34" y="321">第五层 · 兜底：保险基金 · 风险准备金 · 自动减仓 · 差异处置预案</text>
+          </svg>
+          <p class="diagram__cap"><b>图 05-C</b> 资金安全的五层体系。<strong>上层失效时下层兜底</strong>：账本错了靠对账发现，密钥泄露了靠冷热分离限制损失，损失发生了靠保险基金覆盖。没有任何一层是多余的。</p>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 05 章 · 检查清单</span>
+          <p>
+            ① 资金守恒等式可被程序验证，且在途量已显式建模；<br>
+            ② 所有余额变动经过唯一账本入口，无旁路；<br>
+            ③ 审计日志采用哈希链，可验证未被篡改；<br>
+            ④ 冷热钱包分层，热钱包占比 ≤ 5%，有阈值自动补充；<br>
+            ⑤ 密钥采用 HSM/MPC/多签，无单点可独立签名；<br>
+            ⑥ 提现六道闸门全部上线，大额双人复核；<br>
+            ⑦ 充值确认数按链设定，区块重组有回滚机制；<br>
+            ⑧ 保险基金与风险准备金有明确规模与动用规则；<br>
+            ⑨ 差异处置流程预先定义，第一步是冻结敞口而非修数据。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

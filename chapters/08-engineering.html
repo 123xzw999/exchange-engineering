@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08 · 技术栈与工程实践 — 交易系统工程</title>
+<meta name="description" content="语言与存储选型、消息队列与事件流、撮合性能工程、可观测性三件套、压测方法与调优案例。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="08-engineering">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">08</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Engineering</span>
+          <span class="dot"></span>
+          <span class="eyebrow">7 节 · 约 24 分钟</span>
+        </div>
+        <h1>技术栈与工程实践：把性能压到极限</h1>
+        <p class="chapter-head__lede">
+          选型决定了性能的天花板，工程实践决定了能否触及这个天花板。
+          这一章讲语言与存储的分工逻辑、撮合内核的性能工程、
+          可观测性三件套，以及一套能测出系统真实上限的压测方法。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>同样的业务，为什么不同选型的性能差几十倍</dd></div>
+          <div><dt>关键产出</dt><dd>选型矩阵 · 性能优化清单 · 压测方案</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch08-engineering.webp" width="1200" height="675"
+               alt="暗色电路板上发光处理器核心的微距特写" decoding="async">
+        </div>
+        <figcaption><b>FIG 08</b> 性能优化的本质是「让数据离 CPU 更近、让 CPU 少做无用功」。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">08.1</span>语言选型：按职责分工，而不是全栈统一</h2>
+
+        <p>
+          「整个系统用一种语言」是管理上的偷懒，不是工程上的最优。
+          交易系统的不同部分对语言的要求差异极大，
+          按职责分工才能各取所长。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>模块</th><th>核心要求</th><th>常见选择</th><th>为什么</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>撮合内核</td>
+                <td>极致延迟、无 GC 停顿、确定性</td>
+                <td>C++ / Rust</td>
+                <td>可精确控制内存布局与分配；无运行时；能绑定 CPU 核心；延迟可预测</td>
+              </tr>
+              <tr>
+                <td>业务服务</td>
+                <td>开发效率、生态、并发处理</td>
+                <td>Go / Java</td>
+                <td>Go 的 goroutine 适合 IO 密集；Java 生态成熟、JVM 调优手段丰富</td>
+              </tr>
+              <tr>
+                <td>风控与规则引擎</td>
+                <td>快速迭代、热更新</td>
+                <td>Java / Python（规则部分）</td>
+                <td>规则变化频繁，需要能快速上线而不重启核心服务</td>
+              </tr>
+              <tr>
+                <td>数据分析</td>
+                <td>批处理、统计、生态</td>
+                <td>Python / SQL</td>
+                <td>生态最丰富，开发效率最高，对延迟不敏感</td>
+              </tr>
+              <tr>
+                <td>前端</td>
+                <td>实时渲染、交互响应</td>
+                <td>TypeScript + React</td>
+                <td>类型安全；生态成熟；WebSocket 与高频渲染有成熟方案</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">多语言的代价必须正视</span>
+          <p>
+            多语言不是免费的。它带来构建复杂度、调试难度、
+            跨语言序列化成本、以及团队技能分散。
+            因此引入第二种语言的判据应当很明确：
+            <strong>这门语言能否带来数量级的性能或安全提升？</strong>
+            如果只是「20% 的性能提升」，用 Go 写完全够，不值得引入 C++。
+            撮合内核之所以值得用 C++，是因为它带来的是数量级的差异。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">08.2</span>存储选型：四类数据，四种库</h2>
+
+        <p>
+          试图用一种数据库装下所有数据，必然有一类数据很难受。
+          按访问模式分类是更实际的做法。
+        </p>
+
+        <div class="grid-cards">
+          <article>
+            <span class="no">STORE 01</span>
+            <h4>关系库 · MySQL / PostgreSQL</h4>
+            <p>订单、账本、用户、提现。要求 ACID 事务与唯一约束。账本表单独部署，只追加不修改。</p>
+            <p style="margin-top:10px;color:var(--gold)">关键：分库分表按用户 ID，避免热点</p>
+          </article>
+          <article>
+            <span class="no">STORE 02</span>
+            <h4>内存库 · Redis</h4>
+            <p>盘口缓存、会话、限流计数、幂等去重、排行榜。亚毫秒读写，可容忍故障时重建。</p>
+            <p style="margin-top:10px;color:var(--gold)">关键：明确哪些数据可以丢</p>
+          </article>
+          <article>
+            <span class="no">STORE 03</span>
+            <h4>消息队列 · Kafka / Pulsar</h4>
+            <p>事件流、跨服务通知、异步任务。要求分区内有序、至少一次投递、可回溯重放。</p>
+            <p style="margin-top:10px;color:var(--gold)">关键：分区键的选择决定有序性范围</p>
+          </article>
+          <article>
+            <span class="no">STORE 04</span>
+            <h4>列式库 · ClickHouse</h4>
+            <p>成交历史、K 线、风控日志、审计流水。高压缩比、聚合查询快、写多读少。</p>
+            <p style="margin-top:10px;color:var(--gold)">关键：不承担事务，只做分析</p>
+          </article>
+        </div>
+
+        <h3 class="sub" id="s2-1">账本存储的特殊要求</h3>
+
+        <p>
+          账本是所有数据里最特殊的一类。它的要求可以总结为三条，
+          这三条决定了它不能和其他业务数据放在一起：
+        </p>
+
+        <ul class="list-lines">
+          <li><span class="k">隔离</span><span class="v"><b>独立部署</b>。账本表的写入量可能占全库的 60% 以上，与订单、用户表混在一起会互相影响。独立实例 + 独立磁盘是标准做法。</span></li>
+          <li><span class="k">只追加</span><span class="v"><b>权限上禁止 UPDATE/DELETE</b>。应用账号只有 INSERT 与 SELECT，这是靠数据库权限强制执行的，不靠代码自觉。</span></li>
+          <li><span class="k">可校验</span><span class="v"><b>支持区间校验</b>。能高效地回答「第 N 到第 M 条之间借贷是否平衡」，这要求 <code>entry_no</code> 上有索引且连续。</span></li>
+        </ul>
+
+        <h2 class="sec" id="s3"><span class="sec__no">08.3</span>事件流：系统的主干神经</h2>
+
+        <p>
+          在事件驱动的架构里，消息队列不是「解耦工具」，
+          而是<strong>系统的真相来源</strong>。所有状态都是从事件流推导出来的，
+          这意味着它的可靠性要求高于任何单个服务。
+        </p>
+
+        <h3 class="sub" id="s3-1">分区键决定有序性的边界</h3>
+
+        <p>
+          Kafka 只保证<em>分区内</em>有序。因此分区键的选择直接决定了
+          「什么范围内的事件是有序的」。
+        </p>
+
+        <div class="compare">
+          <div class="good">
+            <h5>按交易对分区</h5>
+            <ul>
+              <li>同一交易对的事件严格有序 —— 满足撮合要求</li>
+              <li>不同交易对并行处理，吞吐量高</li>
+              <li>单交易对的处理能力受单分区限制</li>
+              <li>适用于撮合、行情类事件</li>
+            </ul>
+          </div>
+          <div class="good">
+            <h5>按用户 ID 分区</h5>
+            <ul>
+              <li>同一用户的事件严格有序 —— 满足资金操作要求</li>
+              <li>用户之间互不影响，天然隔离</li>
+              <li>热点用户（做市商）可能造成分区倾斜</li>
+              <li>适用于账户、提现类事件</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note note--warn">
+          <span class="note__tag">分区键选错的后果</span>
+          <p>
+            如果撮合事件用「随机分区」，同一交易对的订单会落到不同分区，
+            下游消费者并行处理时无法保证顺序 ——
+            <strong>撮合结果将不可复现</strong>，前面所有关于确定性的设计全部失效。
+            分区键必须与「需要保序的业务边界」严格对应，这是设计事件流时的第一决策。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">08.4</span>撮合性能工程：把单线程压到极致</h2>
+
+        <p>
+          第 03 章讲了「为什么必须单线程」。这一节讲「单线程怎么做到每秒几十万笔」。
+          核心思路只有一条：<strong>消除一切非必要的 CPU 开销</strong>。
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 396" role="img" aria-label="撮合内核的性能优化手段">
+            <rect class="dg-node dg-node--gold" x="16" y="16" width="648" height="52" rx="6"/>
+            <text class="dg-t" x="34" y="40">优化目标：把每笔订单的处理时间从微秒级压到百纳秒级</text>
+            <text class="dg-s" x="34" y="58">每省下 1 微秒，单线程每秒就能多处理约 500 笔订单</text>
+
+            <rect class="dg-node" x="16" y="80" width="316" height="76" rx="6"/>
+            <text class="dg-t" x="32" y="104">① 零动态分配</text>
+            <text class="dg-s" x="32" y="124">对象池预分配，循环内不 new</text>
+            <text class="dg-s" x="32" y="142">消除 GC 停顿与内存碎片</text>
+
+            <rect class="dg-node" x="348" y="80" width="316" height="76" rx="6"/>
+            <text class="dg-t" x="364" y="104">② 零拷贝</text>
+            <text class="dg-s" x="364" y="124">事件写入共享内存环形缓冲</text>
+            <text class="dg-s" x="364" y="142">下游直接读取，不做序列化</text>
+
+            <rect class="dg-node" x="16" y="168" width="316" height="76" rx="6"/>
+            <text class="dg-t" x="32" y="192">③ 零系统调用</text>
+            <text class="dg-s" x="32" y="212">不写日志、不访问数据库、不加锁</text>
+            <text class="dg-s" x="32" y="230">所有 IO 移到独立线程</text>
+
+            <rect class="dg-node" x="348" y="168" width="316" height="76" rx="6"/>
+            <text class="dg-t" x="364" y="192">④ CPU 亲和与隔离</text>
+            <text class="dg-s" x="364" y="212">绑定独占核心，关闭超线程</text>
+            <text class="dg-s" x="364" y="230">避免上下文切换与缓存失效</text>
+
+            <rect class="dg-node" x="16" y="256" width="316" height="76" rx="6"/>
+            <text class="dg-t" x="32" y="280">⑤ 数据结构友好</text>
+            <text class="dg-s" x="32" y="300">数组代替链表，顺序访问优先</text>
+            <text class="dg-s" x="32" y="318">提高 CPU 缓存命中率</text>
+
+            <rect class="dg-node" x="348" y="256" width="316" height="76" rx="6"/>
+            <text class="dg-t" x="364" y="280">⑥ 分支预测友好</text>
+            <text class="dg-s" x="364" y="300">热路径无分支，冷路径分离</text>
+            <text class="dg-s" x="364" y="318">减少流水线冲刷</text>
+
+            <rect class="dg-node dg-node--cyan" x="16" y="344" width="648" height="38" rx="6"/>
+            <text class="dg-s" x="34" y="368">前置条件：所有业务校验（余额、风控、精度）必须在进入内核之前完成 —— 内核只做纯计算</text>
+          </svg>
+          <p class="diagram__cap"><b>图 08-A</b> 撮合内核的六项优化。<strong>它们的共同点是「把工作挪出去」而不是「把工作做得更快」</strong> —— 这是低延迟系统优化的核心思路。把日志、持久化、校验全部移出热路径，比优化热路径本身的收益大得多。</p>
+        </div>
+
+        <h3 class="sub" id="s4-1">延迟的真正构成</h3>
+
+        <p>
+          很多人以为「撮合慢是因为算法不够快」。实际上算法只占一小部分，
+          大部分延迟来自内存访问与同步原语：
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>操作</th><th>典型耗时</th><th>相对倍数</th></tr></thead>
+            <tbody>
+              <tr><td>L1 缓存访问</td><td>约 1 ns</td><td>1×</td></tr>
+              <tr><td>L2 缓存访问</td><td>约 4 ns</td><td>4×</td></tr>
+              <tr><td>L3 缓存访问</td><td>约 15 ns</td><td>15×</td></tr>
+              <tr><td>主内存访问</td><td>约 80 ns</td><td>80×</td></tr>
+              <tr><td>一次互斥锁竞争</td><td>约 20 ~ 100 ns</td><td>20~100×</td></tr>
+              <tr><td>一次系统调用</td><td>约 500 ns ~ 2 μs</td><td>500~2000×</td></tr>
+              <tr><td>一次网络往返（同机房）</td><td>约 100 μs</td><td>100000×</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">读这张表得出的结论</span>
+          <p>
+            <strong>一次网络往返 = 十万次缓存访问。</strong>
+            所以撮合内核里任何形式的远程调用都是不可接受的。
+            同样，一次系统调用的代价相当于 500 次内存访问 ——
+            这就是为什么「不写日志」不是洁癖，而是必要的性能纪律。
+            优化优先级应该是：<em>先消除远程调用 → 再消除系统调用与锁 → 最后才优化算法</em>。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s5"><span class="sec__no">08.5</span>可观测性：让系统自己说出问题在哪</h2>
+
+        <p>
+          一个没有可观测性的分布式系统，在出故障时就是一堆黑盒。
+          可观测性由三个支柱构成，它们解决的是不同的问题。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>支柱</th><th>解决什么问题</th><th>关键设计</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>指标 Metrics</td>
+                <td>「系统整体健康吗？趋势如何？」</td>
+                <td>用直方图而非平均值记录延迟 —— 平均值会掩盖长尾。P99 才是用户实际感受</td>
+              </tr>
+              <tr>
+                <td>日志 Logs</td>
+                <td>「这一笔具体发生了什么？」</td>
+                <td>结构化 JSON；必带 trace_id 与业务 ID；资金日志单独隔离并长期留存</td>
+              </tr>
+              <tr>
+                <td>追踪 Traces</td>
+                <td>「慢在哪一跳？谁调用了谁？」</td>
+                <td>全链路采样；撮合内核需要特殊的轻量埋点，不能引入可观测性开销</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub" id="s5-1">必须监控的核心指标</h3>
+
+        <ul class="list-lines">
+          <li><span class="k">延迟</span><span class="v"><b>P50 / P90 / P99 / P99.9</b>，按接口与交易对分别统计。只看平均值等于什么都没看。</span></li>
+          <li><span class="k">吞吐</span><span class="v"><b>每秒订单数、成交数、事件数</b>。要能按交易对下钻，快速定位是全局问题还是单交易对问题。</span></li>
+          <li><span class="k">队列</span><span class="v"><b>定序器积压、消息队列 lag、线程池队列深度</b>。积压是雪崩的前兆，比延迟更早发出预警。</span></li>
+          <li><span class="k">资金</span><span class="v"><b>各币种余额总量、对账差异、冻结总额</b>。这类指标应当作为业务指标监控，异常即 P0。</span></li>
+          <li><span class="k">错误</span><span class="v"><b>按错误码分类统计</b>，而不是笼统的「错误率」。余额不足导致的拒绝是正常业务，不该触发告警。</span></li>
+        </ul>
+
+        <div class="note note--gold">
+          <span class="note__tag">告警设计的一条原则</span>
+          <p>
+            <strong>告警必须可行动。</strong>如果一个告警响了之后，
+            值班人员不知道该做什么，那这个告警就是噪音，
+            最终会导致所有人忽略告警（告警疲劳）。
+            每条告警都应该附上：可能的原因、排查步骤、止损动作。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">08.6</span>压测：测出系统的真实上限</h2>
+
+        <p>
+          压测最常见的错误是「测了一个假的场景」。
+          用固定请求、固定参数、固定节奏去压测，得到的是一个乐观的数字，
+          而真实流量有热点、有长尾、有突发。
+        </p>
+
+        <h3 class="sub" id="s6-1">有效压测的四个要求</h3>
+
+        <ol class="steps">
+          <li><b>流量模型要真实</b><span>按真实业务比例构造流量：查询 : 下单 : 撤单 : 提现 ≈ 100 : 10 : 8 : 0.1。只压下单接口得到的数字没有意义，因为真实系统里查询占绝大多数。</span></li>
+          <li><b>数据分布要真实</b><span>用户不是均匀的。少数活跃用户贡献大部分请求，部分交易对占据大部分流量。压测数据必须复现这种不均衡，否则测不出热点问题。</span></li>
+          <li><b>包含慢依赖</b><span>数据库、缓存、消息队列都必须是真实的，且数据量要达到生产规模。用一个空数据库压测，索引还没建立起来，测出来的数字会严重偏高。</span></li>
+          <li><b>测到「拐点」而不是「峰值」</b><span>逐步加压，观察延迟曲线。找到延迟开始非线性上升的那个点 —— 那才是系统的真实容量。峰值数字往往已经是在崩溃边缘。</span></li>
+        </ol>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 306" role="img" aria-label="压力测试的延迟曲线拐点">
+            <!-- 坐标轴 -->
+            <path class="dg-line" d="M60,240 H640" stroke-width="1"/>
+            <path class="dg-line" d="M60,40 V240" stroke-width="1"/>
+            <text class="dg-label" x="350" y="278" text-anchor="middle">并发压力 →</text>
+            <text class="dg-label" x="20" y="140" transform="rotate(-90 20 140)" text-anchor="middle">P99 延迟 →</text>
+
+            <!-- 曲线 -->
+            <path d="M60,232 C180,228 300,220 400,196 C470,178 510,140 545,80 C565,46 580,36 600,32"
+                  fill="none" stroke="rgba(214,166,76,.85)" stroke-width="2"/>
+
+            <!-- 拐点 -->
+            <circle cx="470" cy="172" r="4" fill="#D6A64C"/>
+            <path class="dg-line dg-line--dash" d="M470,172 V240"/>
+            <text class="dg-label" x="470" y="256" text-anchor="middle" fill="rgba(214,166,76,.9)">拐点 · 真实容量</text>
+
+            <!-- 区域标注 -->
+            <text class="dg-s" x="150" y="212">平稳区：延迟几乎不随压力变化</text>
+            <text class="dg-s" x="500" y="120">崩溃区：延迟指数上升</text>
+            <path class="dg-line dg-line--dash" d="M400,196 H60" opacity=".4"/>
+            <text class="dg-label" x="66" y="192">容量上限的安全水位通常取拐点的 60%~70%</text>
+
+            <!-- 说明 -->
+            <rect class="dg-node" x="60" y="288" width="580" height="1" rx="0"/>
+            <text class="dg-label" x="60" y="302">为什么不用峰值：峰值点已经在非线性区，任何微小的流量波动都会导致延迟失控</text>
+          </svg>
+          <p class="diagram__cap"><b>图 08-B</b> 压测要找的是拐点。<strong>拐点之前的容量是「安全的」，之后是「随时崩溃的」</strong>。实际容量规划应当取拐点的 60%~70%，为突发流量留出余量。</p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">08.7</span>调优案例：从 5 万到 50 万 TPS</h2>
+
+        <p>
+          下面是一个典型撮合内核的优化过程。注意每一步的收益量级 ——
+          它验证了前面那条结论：<strong>消除开销比优化算法有效得多</strong>。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>步骤</th><th>做了什么</th><th>TPS</th><th>提升</th></tr></thead>
+            <tbody>
+              <tr><td>起点</td><td>Java 实现，订单对象每笔新建，同步写日志，用 HashMap 维护价位</td><td>50,000</td><td>—</td></tr>
+              <tr><td>①</td><td>对象池复用，消除 GC 压力</td><td>90,000</td><td>1.8×</td></tr>
+              <tr><td>②</td><td>日志改为异步批量写入，移出热路径</td><td>150,000</td><td>1.7×</td></tr>
+              <tr><td>③</td><td>价位结构改为有序数组 + 二分查找，替代 HashMap 遍历</td><td>230,000</td><td>1.5×</td></tr>
+              <tr><td>④</td><td>改用 C++ 重写内核，精确控制内存布局</td><td>400,000</td><td>1.7×</td></tr>
+              <tr><td>⑤</td><td>CPU 亲和绑定 + 关闭超线程 + 大页内存</td><td>520,000</td><td>1.3×</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">从案例中提炼的三条规律</span>
+          <p>
+            <strong>① 前两步（消除 GC 与 IO）贡献了 3 倍提升</strong>，
+            而这两步都没有改变算法 —— 只是把开销挪走了。
+          </p>
+          <p>
+            <strong>② 换语言带来 1.7 倍</strong>，是在前面积累的基础上。
+            如果一上来就用 C++ 但保留原来的设计（每笔 new、同步写日志），
+            性能不会比优化后的 Java 好多少。
+          </p>
+          <p>
+            <strong>③ 每一步之后都要重新压测定位新的瓶颈</strong>。
+            优化 A 之后瓶颈会转移到 B，凭直觉猜下一个瓶颈几乎总是猜错。
+          </p>
+        </div>
+
+        <div class="note note--info">
+          <span class="note__tag">一个容易被忽略的瓶颈</span>
+          <p>
+            当单交易对 TPS 达到几十万后，新的瓶颈往往不在撮合本身，
+            而在<strong>行情分发的带宽</strong>与<strong>下游消费者的处理能力</strong>。
+            此时继续优化撮合已经没有意义 ——
+            系统整体的上限由最慢的一环决定，而不是最快的一环。
+            这也是为什么容量规划必须做全链路压测，而不能只压单点。
+          </p>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 08 章 · 检查清单</span>
+          <p>
+            ① 语言按职责分工，引入新语言的判据是数量级提升；<br>
+            ② 四类数据分四种存储，账本独立部署且只追加；<br>
+            ③ 消息队列分区键与业务保序边界严格对应；<br>
+            ④ 撮合内核零分配、零拷贝、零系统调用，CPU 亲和绑定；<br>
+            ⑤ 优化顺序：先消除远程调用与 IO，再优化算法；<br>
+            ⑥ 延迟用直方图统计，关注 P99 而非平均值；<br>
+            ⑦ 压测流量模型与数据分布贴近真实，测拐点而非峰值；<br>
+            ⑧ 容量规划取拐点的 60%~70%，全链路压测。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>

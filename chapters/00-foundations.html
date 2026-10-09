@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>00 · 从零到一 — 交易系统工程</title>
+<meta name="description" content="需求如何从一句模糊的话变成可验证的问题陈述，领域模型怎么长出来，架构如何分层与切边界，以及迭代、测试、上线、运维的完整工程链路。">
+<meta name="theme-color" content="#08090B">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%2308090B'/%3E%3Cpath d='M6.5 16.5 L13 6.5 L19.5 16.5' stroke='%23D6A64C' stroke-width='1.6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body data-page="00-foundations">
+
+<div class="progress" aria-hidden="true"><i></i></div>
+<header data-topbar></header>
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside data-rail></aside>
+
+  <main class="doc">
+    <div class="doc__inner">
+
+      <header class="chapter-head">
+        <span class="chapter-mark">00</span>
+        <div class="chapter-head__meta">
+          <span class="eyebrow eyebrow--gold">Foundations</span>
+          <span class="dot"></span>
+          <span class="eyebrow">8 节 · 约 24 分钟</span>
+        </div>
+        <h1>从零到一：软件是怎么被造出来的</h1>
+        <p class="chapter-head__lede">
+          写代码是整个工程里最靠后、也最不值钱的一步。在它之前有需求澄清、领域建模、边界划分，
+          在它之后有测试、灰度、监控、复盘。这一章先把这条链路走一遍 ——
+          后面九章的全部细节，都挂在这条链路上。
+        </p>
+        <dl class="chapter-strip">
+          <div><dt>本章回答</dt><dd>一个系统在写第一行代码之前，应该想清楚什么</dd></div>
+          <div><dt>关键产出</dt><dd>可验证的需求 · 领域模型 · 分层架构 · 测试与发布策略</dd></div>
+        </dl>
+      </header>
+
+      <figure class="fig rv">
+        <div class="fig__frame">
+          <img src="../assets/images/ch00-foundations.webp" width="1200" height="675"
+               alt="暗色桌面上的技术蓝图与制图工具" decoding="async">
+        </div>
+        <figcaption><b>FIG 00</b> 图纸先于建筑。软件工程里，这张「图纸」是需求、领域模型与接口契约。</figcaption>
+      </figure>
+
+      <article class="prose" data-article>
+
+        <h2 class="sec" id="s1"><span class="sec__no">00.1</span>需求：从一句话到可验证的问题</h2>
+
+        <p>
+          「做一个交易平台。」这是一句需求，但它不是一句<strong>可执行</strong>的需求。
+          它没有边界、没有验收标准、没有任何能判断「做完了没有」的判据。
+          工程上第一个真正有价值动作，是把这类句子拆成一组<strong>可被证伪</strong>的陈述。
+        </p>
+
+        <p>
+          拆分时至少要问四个问题：<em>谁</em>用（干系人）、<em>在什么场景</em>下用（用例）、
+          <em>什么条件</em>算成功（验收标准）、<em>什么不能违反</em>（约束）。
+          前三个是功能需求，最后一个往往是非功能需求 —— 而对交易系统来说，
+          非功能需求才是真正决定架构的东西。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead>
+              <tr><th>维度</th><th>模糊表述</th><th>可验证表述</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>功能</td>
+                <td>用户能下单</td>
+                <td>限价单在提交后 50ms 内返回「已受理」或明确的拒绝原因码；同一订单号重复提交只成交一次</td>
+              </tr>
+              <tr>
+                <td>性能</td>
+                <td>系统要快</td>
+                <td>撮合内核 P99 处理延迟 &lt; 1ms；网关端到端 P99 &lt; 20ms；单交易对峰值 10 万笔/秒</td>
+              </tr>
+              <tr>
+                <td>一致性</td>
+                <td>钱不能错</td>
+                <td>任意时刻，所有账户余额之和恒等于已发行总量；日终对账差异必须为 0，否则阻断提现</td>
+              </tr>
+              <tr>
+                <td>可用性</td>
+                <td>不能挂</td>
+                <td>交易链路月度可用性 ≥ 99.95%；下单接口故障时必须在 200ms 内快速失败，不得挂起</td>
+              </tr>
+              <tr>
+                <td>安全</td>
+                <td>要安全</td>
+                <td>提现需二次验证 + 地址白名单；热钱包余额不超过总资产 5%；所有资金操作留不可篡改审计日志</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note note--gold">
+          <span class="note__tag">经验法则</span>
+          <p>
+            如果一条需求无法写出「什么情况下算失败」，那它就不是需求，是愿望。
+            「系统要安全」是愿望；「热钱包被盗后，冷钱包资产不受影响，且损失上限被保险基金覆盖」才是需求。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s2"><span class="sec__no">00.2</span>领域建模：把现实翻译成数据结构</h2>
+
+        <p>
+          领域模型不是数据库表设计。它是对业务概念的<strong>抽象</strong> ——
+          决定哪些名词有独立身份、哪些只是属性、哪些概念之间存在不变式。
+          建模错了，后面所有代码都在给这个错误打补丁。
+        </p>
+
+        <p>
+          交易系统的领域模型可以浓缩成八个核心概念。注意它们之间的关系，
+          尤其是 <code>LedgerEntry</code> 与 <code>Balance</code> 的关系 ——
+          这是第 04 章「币为什么不会消失」的根：
+        </p>
+
+        <div class="grid-cards">
+          <article><span class="no">ENTITY 01</span><h4>User</h4><p>身份主体。承载 KYC 状态、风险等级、权限。一个用户可以拥有多个账户。</p></article>
+          <article><span class="no">ENTITY 02</span><h4>Account</h4><p>账户容器，区分交易账户、合约账户、资金账户。账户是资金隔离的边界。</p></article>
+          <article><span class="no">ENTITY 03</span><h4>Balance</h4><p>某账户下某币种的余额快照。必须拆成可用、冻结、锁定三个分量，绝不能用单一数字。</p></article>
+          <article><span class="no">ENTITY 04</span><h4>LedgerEntry</h4><p>账本条目。每一次余额变动都必须由一组借贷平衡的条目解释，它是事实的唯一来源。</p></article>
+          <article><span class="no">ENTITY 05</span><h4>Instrument</h4><p>可交易标的，如 BTC/USDT。定义价格精度、数量精度、最小下单量、费率档位。</p></article>
+          <article><span class="no">ENTITY 06</span><h4>Order</h4><p>订单。有明确的生命周期状态机，状态迁移必须受约束，不允许任意跳转。</p></article>
+          <article><span class="no">ENTITY 07</span><h4>Trade</h4><p>成交记录。一笔成交必然同时归属于两个订单（买方与卖方），这是撮合的不变式。</p></article>
+          <article><span class="no">ENTITY 08</span><h4>Position</h4><p>持仓。合约场景下的风险敞口，与现货的 Balance 是两套完全不同的记账逻辑。</p></article>
+        </div>
+
+        <h3 class="sub" id="s2-1">状态机是领域模型的核心表达</h3>
+
+        <p>
+          订单为什么会被写乱？因为开发者把它当成一个字符串字段，随手 <code>UPDATE</code>。
+          正确做法是把合法迁移<strong>编码进类型系统</strong>，让非法迁移在编译期或运行期直接失败。
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 订单状态机：只允许列出的迁移，其余一律拒绝</span>
+<span class="k">type</span> OrderState <span class="k">string</span>
+
+<span class="k">const</span> (
+    StateNew              OrderState = <span class="s">"NEW"</span>              <span class="c">// 已受理，未进撮合</span>
+    StatePartiallyFilled  OrderState = <span class="s">"PARTIALLY_FILLED"</span> <span class="c">// 部分成交</span>
+    StateFilled           OrderState = <span class="s">"FILLED"</span>           <span class="c">// 完全成交（终态）</span>
+    StateCanceled         OrderState = <span class="s">"CANCELED"</span>         <span class="c">// 已撤销（终态）</span>
+    StateRejected         OrderState = <span class="s">"REJECTED"</span>         <span class="c">// 已拒绝（终态）</span>
+)
+
+<span class="c">// 迁移表：显式声明「从哪儿能到哪儿」</span>
+<span class="k">var</span> allowed = <span class="k">map</span>[OrderState][]OrderState{
+    StateNew:             {StatePartiallyFilled, StateFilled, StateCanceled, StateRejected},
+    StatePartiallyFilled: {StatePartiallyFilled, StateFilled, StateCanceled},
+    StateFilled:          {},  <span class="c">// 终态：不可再迁移</span>
+    StateCanceled:        {},
+    StateRejected:        {},
+}
+
+<span class="k">func</span> (o *Order) Transition(to OrderState) <span class="k">error</span> {
+    <span class="k">for</span> _, s := <span class="k">range</span> allowed[o.State] {
+        <span class="k">if</span> s == to {
+            o.State = to
+            <span class="k">return</span> <span class="k">nil</span>
+        }
+    }
+    <span class="c">// 非法迁移：这里必须报错，而不是静默接受</span>
+    <span class="k">return</span> fmt.Errorf(<span class="s">"illegal transition %s -&gt; %s (order %s)"</span>, o.State, to, o.ID)
+}</pre>
+        </div>
+
+        <p>
+          这段代码的价值不在于「防止 bug」，而在于<strong>把业务规则从人的记忆里搬进代码</strong>。
+          一个新人接手时，不需要读文档就知道 <code>FILLED</code> 之后不能再改状态。
+        </p>
+
+        <h2 class="sec" id="s3"><span class="sec__no">00.3</span>架构：分层、边界与演进</h2>
+
+        <p>
+          架构的本质是<strong>划边界</strong>，而划边界只有一个目的：
+          让变化被限制在局部。判断一个边界划得好不好，只需问一句 ——
+          「这个需求变了，我要改几个服务？」
+        </p>
+
+        <div class="diagram rv">
+          <svg viewBox="0 0 680 372" role="img" aria-label="分层架构示意图">
+            <defs>
+              <marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(255,255,255,.35)"/>
+              </marker>
+            </defs>
+
+            <!-- 接入层 -->
+            <rect class="dg-node" x="16" y="18" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="42">接入层 · Edge</text>
+            <text class="dg-s" x="34" y="60">CDN · DDoS 清洗 · WAF · 负载均衡 · TLS 卸载 · API 网关</text>
+            <text class="dg-label" x="648" y="42" text-anchor="end">无状态 · 可水平扩展</text>
+
+            <!-- 应用层 -->
+            <rect class="dg-node dg-node--cyan" x="16" y="88" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="112">应用层 · Application</text>
+            <text class="dg-s" x="34" y="130">用户服务 · 订单服务 · 资产服务 · 风控服务 · 行情服务 · 清结算服务</text>
+            <text class="dg-label" x="648" y="112" text-anchor="end">有状态 · 按一致性要求切分</text>
+
+            <!-- 领域/撮合层 -->
+            <rect class="dg-node dg-node--gold" x="16" y="158" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="182">领域核心 · Matching Core</text>
+            <text class="dg-s" x="34" y="200">撮合引擎 · 订单簿 · 定序器 · 结算器 —— 全内存、单线程、确定性</text>
+            <text class="dg-label" x="648" y="182" text-anchor="end">有状态 · 不可水平切分（按交易对分片）</text>
+
+            <!-- 数据层 -->
+            <rect class="dg-node" x="16" y="228" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="252">数据层 · Persistence</text>
+            <text class="dg-s" x="34" y="270">关系库（账本/订单）· 内存库（缓存/盘口）· 消息队列（事件）· 列存（分析）</text>
+            <text class="dg-label" x="648" y="252" text-anchor="end">持久 · 多副本 · 可恢复</text>
+
+            <!-- 基础设施 -->
+            <rect class="dg-node" x="16" y="298" width="648" height="56" rx="6"/>
+            <text class="dg-t" x="34" y="322">基础设施 · Infrastructure</text>
+            <text class="dg-s" x="34" y="340">服务发现 · 配置中心 · 密钥管理 · 监控告警 · 日志与链路追踪</text>
+            <text class="dg-label" x="648" y="322" text-anchor="end">横向能力 · 被所有层依赖</text>
+
+            <!-- 侧向箭头：调用只能向下 -->
+            <path class="dg-line dg-line--gold" d="M672,46 L672,326" marker-end="url(#ar)" opacity=".5"/>
+            <text class="dg-label" x="668" y="196" text-anchor="end" transform="rotate(-90 668 196)" fill="rgba(214,166,76,.75)">依赖方向 · 只能向下，不可反向</text>
+          </svg>
+          <p class="diagram__cap"><b>图 00-A</b> 五层架构。关键约束是<strong>依赖只能向下</strong>：领域核心不依赖任何具体数据库，数据层可以被替换而不影响撮合逻辑。这条约束保证了「换存储引擎」不会演变成「重写系统」。</p>
+        </div>
+
+        <h3 class="sub" id="s3-1">边界怎么切</h3>
+
+        <p>三条可操作的判据，按优先级排序：</p>
+
+        <ol class="steps">
+          <li><b>按一致性要求切</b><span>需要强一致、必须在同一个事务里完成的，放一起。下单冻结资金是一个事务；发送通知不是。前者不能跨服务，后者必须跨。</span></li>
+          <li><b>按变化频率切</b><span>费率规则每月改一次，撮合算法两年不动。把变化快的和变化慢的分开，避免为了改费率而重启撮合引擎。</span></li>
+          <li><b>按负载特征切</b><span>行情推送是读多写少的广播型负载，下单是写密集。混在一起会让行情把下单的线程池吃光。</span></li>
+        </ol>
+
+        <div class="note note--warn">
+          <span class="note__tag">反模式</span>
+          <p>
+            最常见的错误是<strong>按组织结构切服务</strong> —— 每个团队一个服务。
+            结果是每次业务变更都要跨三个团队联调，而架构图上看起来很整齐。
+            边界应该跟着<em>业务不变式</em>走，不是跟着汇报线走。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s4"><span class="sec__no">00.4</span>技术选型：选什么，以及更重要的是不选什么</h2>
+
+        <p>
+          交易系统的选型有一个特殊约束：<strong>结果必须可复现</strong>。
+          同样一串输入事件，重放一遍必须得到完全相同的状态。
+          这条约束会直接淘汰一批技术 —— 比如带随机调度的运行时、GC 停顿不可控的语言、
+          以及在业务层做隐式精度转换的库。
+        </p>
+
+        <div class="compare">
+          <div class="good">
+            <h5>优先考虑</h5>
+            <ul>
+              <li>可预测的延迟分布 —— P99 比平均值重要得多</li>
+              <li>确定性的执行语义 —— 同样输入必然同样输出</li>
+              <li>精确的数值类型 —— 金额绝不能用浮点</li>
+              <li>成熟且被大规模验证过 —— 金融系统不做技术试验田</li>
+              <li>团队真正熟悉 —— 冷门技术的隐性成本极高</li>
+            </ul>
+          </div>
+          <div class="bad">
+            <h5>明确回避</h5>
+            <ul>
+              <li>把浮点数用于金额运算（<code>0.1 + 0.2 ≠ 0.3</code> 在账本里是灾难）</li>
+              <li>核心链路上引入不确定的自动重试与随机退避</li>
+              <li>为了「技术先进」而选没有生产案例的方案</li>
+              <li>在撮合内核里做网络 IO 或数据库访问</li>
+              <li>依赖单点且无备份方案的自研组件</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 class="sub" id="s4-1">用 ADR 记录决策</h3>
+
+        <p>
+          选型不是一次性动作。三个月后有人问「为什么当初不用 X」，
+          如果没有记录，就会重开一轮争论。Architecture Decision Record 用一页纸解决这个问题：
+        </p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">ADR · Markdown</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="k"># ADR-007：金额一律使用定点整数表示</span>
+
+<span class="k">状态</span>：已采纳    <span class="k">日期</span>：2026-03-11    <span class="k">决策者</span>：交易内核组
+
+<span class="k">背景</span>
+    账本需要精确的加减运算。早期原型使用 float64 表示金额，
+    在压力测试中出现过 <span class="n">0.00000001</span> 级别的累计误差，
+    导致日终对账差异不为零。
+
+<span class="k">决策</span>
+    所有金额与数量统一用 int64 表示「最小单位」，
+    例如 USDT 保留 8 位小数，则 1 USDT 存为 <span class="n">100000000</span>。
+    币种精度由 Instrument 定义，禁止在业务代码中做隐式换算。
+
+<span class="k">后果</span>
+    (+) 加减运算绝对精确，对账可以做到差异恒为 0
+    (+) 序列化与哈希稳定，便于审计与重放
+    (−) 乘法需谨慎处理溢出与精度截断，需封装专用类型
+    (−) 前端展示需要显式格式化
+
+<span class="k">替代方案</span>
+    decimal 库 —— 被否，性能不满足撮合内核对 P99 的要求。</pre>
+        </div>
+
+        <h2 class="sec" id="s5"><span class="sec__no">00.5</span>开发流程：小步、可验证、可回滚</h2>
+
+        <p>
+          交易系统的开发流程与普通业务系统最大的区别是：
+          <strong>每一次变更都要能单独回滚，且回滚不能依赖数据回滚</strong>。
+          因为资金数据一旦产生就不能「撤销」，只能靠补偿。
+          这决定了发布必须向后兼容 —— 新代码能读旧数据，旧代码也能读新数据。
+        </p>
+
+        <ol class="steps">
+          <li><b>变更必须小</b><span>一个 PR 只做一件事。资金相关的改动尤其如此 —— 500 行的账本重构无法被有效评审，也无法被安全回滚。</span></li>
+          <li><b>评审盯三件事</b><span>这个变更会不会破坏不变式（余额守恒）？失败路径有没有处理？并发下会不会有竞态？功能是否「看起来对」是次要的。</span></li>
+          <li><b>CI 必须包含对账测试</b><span>普通项目跑单元测试就够了。资金系统必须在 CI 里跑「随机生成一万笔操作 → 校验总额守恒」的不变量测试。</span></li>
+          <li><b>制品不可变</b><span>构建产物带 commit hash，部署时只部署已构建的制品，禁止在服务器上改代码。</span></li>
+        </ol>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">YAML · CI 流水线</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="k">stages</span>: [lint, test, invariant, build, deploy-staging]
+
+<span class="k">lint</span>:
+  <span class="k">script</span>:
+    - golangci-lint run ./...
+    - <span class="c"># 禁止在资金相关包中出现 float 类型</span>
+    - <span class="s">"! grep -rn 'float32\\|float64' internal/ledger/ internal/matching/"</span>
+
+<span class="k">test</span>:
+  <span class="k">script</span>: [go test -race -coverprofile=cover.out ./...]
+
+<span class="k">invariant</span>:                    <span class="c"># 资金不变量测试 —— 资金系统的核心防线</span>
+  <span class="k">script</span>:
+    - go test -tags=invariant -run TestConservation ./internal/ledger/
+    <span class="c"># 随机生成 10000 笔充值/下单/成交/提现操作</span>
+    <span class="c"># 断言：Σ所有账户余额 == 期初总量，且每笔都有配对借贷条目</span>
+
+<span class="k">build</span>:
+  <span class="k">script</span>: [go build -trimpath -ldflags <span class="s">"-X main.commit=$CI_COMMIT_SHA"</span> -o bin/app]</pre>
+        </div>
+
+        <h2 class="sec" id="s6"><span class="sec__no">00.6</span>测试策略：五层防线</h2>
+
+        <p>
+          测试的价值不在于覆盖率数字，而在于<strong>在不同层次拦截不同类型的错误</strong>。
+          单元测试拦截逻辑错误，集成测试拦截接口不匹配，不变量测试拦截「所有测试都过了但钱还是错了」。
+        </p>
+
+        <div class="tbl">
+          <table>
+            <thead><tr><th>层次</th><th>验证什么</th><th>典型手段</th><th>拦截的错误类型</th></tr></thead>
+            <tbody>
+              <tr><td>单元测试</td><td>单个函数/类的逻辑</td><td>表驱动测试、边界值、竞态检测</td><td>分支遗漏、边界溢出、空指针</td></tr>
+              <tr><td>集成测试</td><td>服务与真实依赖的协作</td><td>容器化依赖、真实数据库</td><td>SQL 语义差异、序列化不兼容</td></tr>
+              <tr><td>契约测试</td><td>服务间的接口约定</td><td>Consumer-Driven Contracts</td><td>上下游字段改名、类型漂移</td></tr>
+              <tr><td>不变量测试</td><td>系统的全局约束</td><td>属性测试、随机操作序列</td><td>资金不平、订单重复成交、余额为负</td></tr>
+              <tr><td>混沌与压测</td><td>故障与高压下的行为</td><td>注入延迟/杀进程、全链路压测</td><td>级联失败、雪崩、超时未设</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub" id="s6-1">资金系统必须有的三条不变量</h3>
+
+        <p>这三条断言应当被写成自动化测试，在每次提交时运行：</p>
+
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">Go · 不变量断言</span><button class="code__copy" type="button">复制</button></div>
+<pre><span class="c">// 不变量 1：总额守恒 —— 任何操作都不能凭空创造或销毁资产</span>
+<span class="k">func</span> AssertConservation(before, after Snapshot) <span class="k">error</span> {
+    <span class="k">if</span> before.Total != after.Total {
+        <span class="k">return</span> fmt.Errorf(<span class="s">"资产总量变化：%d -&gt; %d（差 %d）"</span>,
+            before.Total, after.Total, after.Total-before.Total)
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}
+
+<span class="c">// 不变量 2：借贷平衡 —— 每笔账务的借方之和必须等于贷方之和</span>
+<span class="k">func</span> AssertBalanced(e []LedgerEntry) <span class="k">error</span> {
+    <span class="k">var</span> debit, credit <span class="k">int64</span>
+    <span class="k">for</span> _, x := <span class="k">range</span> e {
+        debit += x.Debit
+        credit += x.Credit
+    }
+    <span class="k">if</span> debit != credit {
+        <span class="k">return</span> fmt.Errorf(<span class="s">"借贷不平衡：借 %d ≠ 贷 %d"</span>, debit, credit)
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}
+
+<span class="c">// 不变量 3：余额非负 —— 可用余额与冻结余额都不允许为负</span>
+<span class="k">func</span> AssertNonNegative(b Balance) <span class="k">error</span> {
+    <span class="k">if</span> b.Available &lt; <span class="n">0</span> || b.Frozen &lt; <span class="n">0</span> || b.Locked &lt; <span class="n">0</span> {
+        <span class="k">return</span> fmt.Errorf(<span class="s">"出现负余额：可用 %d 冻结 %d 锁定 %d"</span>,
+            b.Available, b.Frozen, b.Locked)
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}</pre>
+        </div>
+
+        <div class="keyline">
+          <span class="keyline__tag">本章要点 01</span>
+          <p>
+            这三条不变量是整站的技术主线。第 03 章讲它们在撮合里怎么被维持，
+            第 04 章讲账本怎么用复式记账从结构上保证它们，
+            第 05 章讲当它们真的被打破时，系统靠什么发现并止损。
+          </p>
+        </div>
+
+        <h2 class="sec" id="s7"><span class="sec__no">00.7</span>上线与运维：把「我不知道」变成「我能看见」</h2>
+
+        <p>
+          上线不是终点，是系统第一次面对真实流量。运维的核心目标只有一个：
+          <strong>缩短从「出问题」到「知道出问题了」之间的时间</strong>。
+          这个时间叫 MTTD（Mean Time To Detect），它比 MTTR 更值得投入 ——
+          因为你无法修复一个你还不知道存在的故障。
+        </p>
+
+        <h3 class="sub" id="s7-1">可观测性的三个支柱</h3>
+
+        <ul class="list-lines">
+          <li><span class="k">指标</span><span class="v"><b>Metrics</b> —— 聚合的数值时间序列。下单 QPS、撮合延迟分位、订单簿深度、各币种余额总量。适合做告警与趋势判断，成本低、保留久。</span></li>
+          <li><span class="k">日志</span><span class="v"><b>Logs</b> —— 离散的事件记录。必须结构化（JSON），必须带 trace_id 与 order_id，否则在故障时毫无用处。资金相关日志需要单独隔离并长期留存。</span></li>
+          <li><span class="k">追踪</span><span class="v"><b>Traces</b> —— 一次请求跨服务的完整调用链。定位「慢在哪一跳」的唯一有效手段。对交易系统而言，一笔订单的全链路追踪是必备能力。</span></li>
+        </ul>
+
+        <h3 class="sub" id="s7-2">用 SLO 而不是「尽力而为」</h3>
+
+        <p>
+          SLO（服务等级目标）把「要稳定」翻译成一个可计算的数字，
+          并由此推出<strong>错误预算</strong>：一个月允许失败多少次。
+          错误预算的意义在于它让「发布新功能」和「保持稳定」不再是吵架，
+          而是一个算术问题 —— 预算还有，就继续发；预算烧完了，就停下修稳定性。
+        </p>
+
+        <div class="spec">
+          <div><dt>可用性目标</dt><dd><span class="big">99.95%</span><p class="sm">月度。折算每月允许约 21.9 分钟不可用</p></dd></div>
+          <div><dt>下单接口 P99</dt><dd><span class="big">&lt;20ms</span><p class="sm">网关端到端，含风控校验</p></dd></div>
+          <div><dt>撮合内核 P99</dt><dd><span class="big">&lt;1ms</span><p class="sm">从收到定序事件到产出成交回报</p></dd></div>
+          <div><dt>对账差异</dt><dd><span class="big">0</span><p class="sm">日终必须为零，非零即触发 P0 告警</p></dd></div>
+        </div>
+
+        <h2 class="sec" id="s8"><span class="sec__no">00.8</span>迭代：让系统可以长期活着</h2>
+
+        <p>
+          一个交易系统上线只是开始。它会在未来几年里持续面对新币种、新业务线、
+          新监管要求和新的攻击手法。能不能活下来，取决于架构是否留了<strong>演进空间</strong>。
+        </p>
+
+        <h3 class="sub" id="s8-1">技术债要分类，不能笼统地「还」</h3>
+
+        <ul class="bullets">
+          <li><strong>有息债</strong> —— 每次改需求都要额外付出的成本。例如把费率硬编码在撮合里。这类债必须尽快还，因为它每天都在收利息。</li>
+          <li><strong>无息债</strong> —— 不影响后续开发，只是不够优雅。例如某个工具类命名不好。可以一直挂着，不必焦虑。</li>
+          <li><strong>致命债</strong> —— 平时不显形，一旦触发就造成资金损失的隐患。例如用浮点算金额、用时间戳做幂等键。这类债不是「要不要还」的问题，是「必须立刻停下手上的活去还」。</li>
+        </ul>
+
+        <h3 class="sub" id="s8-2">重构的安全姿势</h3>
+
+        <p>
+          资金系统的重构有一条铁律：<strong>先建立可对比的基准，再动代码</strong>。
+          具体做法是影子运行 —— 新逻辑与旧逻辑并行跑，用真实流量比对两边输出，
+          差异为零一段时间后才切换。
+        </p>
+
+        <ol class="steps">
+          <li><b>埋点与基准</b><span>在旧逻辑出口记录输入与输出，形成可回放的样本集。</span></li>
+          <li><b>影子运行</b><span>新逻辑接同样的输入，输出只记录不生效，与旧逻辑逐笔比对。</span></li>
+          <li><b>差异归零</b><span>差异必须为零。任何差异都是发现隐藏 bug 的机会，逐条查清原因。</span></li>
+          <li><b>灰度切流</b><span>按用户或交易对逐步切换，每档观察至少一个完整对账周期。</span></li>
+          <li><b>清理旧码</b><span>确认新逻辑稳定后再删旧代码。留一条随时可退的路，直到确认不需要为止。</span></li>
+        </ol>
+
+        <div class="keyline">
+          <span class="keyline__tag">第 00 章 · 检查清单</span>
+          <p>
+            在写第一行代码之前，确认这几件事已经有答案：<br>
+            ① 每条需求都能写出验收标准与失败判据；<br>
+            ② 核心实体的状态机已被显式建模，非法迁移会失败；<br>
+            ③ 架构的依赖方向单向向下，领域核心不依赖具体存储；<br>
+            ④ 金额使用定点整数，选型决策有 ADR 记录；<br>
+            ⑤ CI 里跑着资金不变量测试；<br>
+            ⑥ 每个关键指标都有 SLO，且定义了错误预算；<br>
+            ⑦ 重构有影子运行与灰度切流的具体计划。
+          </p>
+        </div>
+
+      </article>
+
+      <nav data-pager></nav>
+    </div>
+  </main>
+</div>
+
+<script src="../js/site.js"></script>
+</body>
+</html>
